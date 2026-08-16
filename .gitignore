@@ -1,0 +1,27 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+
+# Virtual environments
+.venv
+.env*
+
+# foulders
+zzz*
+media
+
+# migrations
+test
+run.bat
+
+# docker container datas
+minio_data*
+postgres_data*
+redis_data*
+osrm*
+
