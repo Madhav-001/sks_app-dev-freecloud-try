@@ -11,6 +11,11 @@ wheels/
 .venv
 .env*
 
+# Local SQLite databases
+*.sqlite3
+*.sqlite
+db.sqlite3
+
 # foulders
 zzz*
 media

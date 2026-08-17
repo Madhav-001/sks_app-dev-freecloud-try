@@ -71,7 +71,11 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-DATABASES = {"default": dj_database_url.parse(os.getenv("DATABASE_URL"))}
+DATABASES = {
+    "default": dj_database_url.config(
+        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+    )
+}
 
 # print(DATABASES)
 
