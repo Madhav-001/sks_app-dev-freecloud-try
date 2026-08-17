@@ -20,6 +20,8 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 INSTALLED_APPS = [
+    "corsheaders",
+
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -43,6 +45,8 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
+
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -50,6 +54,14 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+]
+
+# Add your Firebase domain here:
+CORS_ALLOWED_ORIGINS = [
+    "https://sri-kumaran-steels.web.app",
+    "https://sri-kumaran-steels.firebaseapp.com",
+    "http://localhost:5173",   # for local dev
+    "http://localhost:3000",   # for local dev
 ]
 
 ROOT_URLCONF = "config.urls"

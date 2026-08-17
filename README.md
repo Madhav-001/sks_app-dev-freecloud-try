@@ -31,6 +31,11 @@ A robust, production-ready Django REST Framework (DRF) backend system designed f
    # python manage.py makemigrations
    python manage.py migrate
    ```
+   
+   ```bash
+   # Create Super User only First time run
+   python manage.py createsuperuser
+   ```
 
 4. **Run Development Server**
    ```bash
