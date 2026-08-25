@@ -12,7 +12,7 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = "django-insecure-CHANGE_ME_TO_SOMETHING_LONGER_THAN_32_BYTES"
-DEBUG = True
+DEBUG = False
 ALLOWED_HOSTS = [
     "localhost", 
     "sri-kumaran-steels.web.app", 
