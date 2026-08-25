@@ -13,7 +13,18 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = "django-insecure-CHANGE_ME_TO_SOMETHING_LONGER_THAN_32_BYTES"
 DEBUG = True
-ALLOWED_HOSTS = ["localhost", "sri-kumaran-steels.web.app", "mady21.pythonanywhere.com", "*"]
+ALLOWED_HOSTS = [
+    "localhost", 
+    "sri-kumaran-steels.web.app", 
+    "mady21.pythonanywhere.com", 
+    "*", 
+
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "https://sri-kumaran-steels.web.app",
+    "https://sri-kumaran-steels.firebaseapp.com",
+
+]
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
