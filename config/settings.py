@@ -13,7 +13,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = "django-insecure-CHANGE_ME_TO_SOMETHING_LONGER_THAN_32_BYTES"
 DEBUG = True
-ALLOWED_HOSTS = ["localhost", "18.60.41.77", "*"]
+ALLOWED_HOSTS = ["localhost", "sri-kumaran-steels.web.app", "mady21.pythonanywhere.com", "*"]
 
 AUTH_USER_MODEL = "users.Employee"
 MEDIA_URL = "/media/"
