@@ -209,7 +209,12 @@ class MonthlyTarget(models.Model):
     Standard monthly KPI target for a sales employee.
     Enforces exactly one target per employee per month/year.
     """
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    id = models.CharField(
+        primary_key=True,
+        max_length=7,
+        editable=False,
+        help_text="Target ID in 'YYYY-MM' format (e.g. '2026-08')"
+    )
     employee = models.ForeignKey(
         Employee,
         on_delete=models.CASCADE,
@@ -262,6 +267,11 @@ class MonthlyTarget(models.Model):
             models.Index(fields=["year", "month"]),
         ]
         ordering = ["-year", "-month"]
+
+    def save(self, *args, **kwargs):
+        if not self.id and self.year and self.month:
+            self.id = f"{int(self.year):04d}-{int(self.month):02d}"
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.employee.username} - {self.month}/{self.year} Target"
