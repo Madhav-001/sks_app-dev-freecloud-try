@@ -14,17 +14,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = "django-insecure-CHANGE_ME_TO_SOMETHING_LONGER_THAN_32_BYTES"
 DEBUG = False
 ALLOWED_HOSTS = [
-    "localhost", 
-    "sri-kumaran-steels.web.app", 
-    "sri-kumaran-steels.firebaseapp.com", 
-    "mady21.pythonanywhere.com", 
-    "*", 
-
-    "http://localhost:5173",
-    "http://localhost:3000",
-    "https://sri-kumaran-steels.web.app",
-    "https://sri-kumaran-steels.firebaseapp.com",
-
+    "localhost",
+    "127.0.0.1",
+    "mady21.pythonanywhere.com",
+    "sri-kumaran-steels.web.app",
+    "sri-kumaran-steels.firebaseapp.com",
+    "*",
 ]
 
 CORS_ALLOWED_ORIGINS = [
@@ -36,12 +31,27 @@ CORS_ALLOWED_ORIGINS = [
 
 CORS_ALLOW_CREDENTIALS = True
 
+# Also allow common headers and methods
+CORS_ALLOW_HEADERS = [
+    "accept",
+    "accept-encoding",
+    "authorization",
+    "content-type",
+    "dnt",
+    "origin",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
+]
+
+
 
 AUTH_USER_MODEL = "users.Employee"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 INSTALLED_APPS = [
+    'corsheaders', 
     'cloudinary_storage',
     'django.contrib.staticfiles',
     'cloudinary',
@@ -67,6 +77,8 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
+
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
