@@ -16,6 +16,7 @@ DEBUG = True
 ALLOWED_HOSTS = [
     "localhost", 
     "sri-kumaran-steels.web.app", 
+    "sri-kumaran-steels.firebaseapp.com", 
     "mady21.pythonanywhere.com", 
     "*", 
 
