@@ -35,8 +35,6 @@ urlpatterns = [
     path('api/crm/', include('crm.urls')),
     path('api/communication/', include('communication.urls')),
     path('api/notifications/', include('notifications.urls')),
-    path('api/reports/', include('reports.urls')),
-    path('api/admin/reports/', include('reports.admin_urls')),
 ]
 
 from django.conf import settings
