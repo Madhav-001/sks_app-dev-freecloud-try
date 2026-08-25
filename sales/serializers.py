@@ -1,7 +1,13 @@
 from rest_framework import serializers
-from .models import Product, Order, OrderItem, Collection
+from .models import Product, Order, OrderItem, Collection, MonthlyTarget, SpecialTarget
 from dealers.serializers import SubDealerSerializer
 from users.serializers import EmployeeSerializer
+from users.models import Employee
+from users.permissions import (
+    has_orders_manage_permission,
+    has_collection_manage_permission,
+    has_visit_manage_permission,
+)
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -256,3 +262,192 @@ class OrderCreateSerializer(serializers.ModelSerializer):
             OrderItem.objects.create(order=order, **item_data)
 
         return order
+
+
+class SimpleEmployeeSummarySerializer(serializers.ModelSerializer):
+    """Compact employee representation for target responses."""
+    class Meta:
+        model = Employee
+        fields = ["id", "employeeidnum", "name", "username", "phone"]
+
+
+class MonthlyTargetSerializer(serializers.ModelSerializer):
+    """Serializer used for reading MonthlyTarget (both admin and employee GET)."""
+    employee_details = SimpleEmployeeSummarySerializer(source="employee", read_only=True)
+    target_setby_details = SimpleEmployeeSummarySerializer(source="target_setby", read_only=True)
+
+    class Meta:
+        model = MonthlyTarget
+        fields = [
+            "id",
+            "employee",
+            "employee_details",
+            "year",
+            "month",
+            "sales_target",
+            "collection_target",
+            "visits_target",
+            "target_setby",
+            "target_setby_details",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "target_setby",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class AdminMonthlyTargetWriteSerializer(serializers.ModelSerializer):
+    """
+    Serializer used for creating (POST) and updating (PATCH) MonthlyTarget.
+    Enforces field-level permissions for orders_manage, collection_manage, and visit_manage.
+    """
+    class Meta:
+        model = MonthlyTarget
+        fields = [
+            "id",
+            "employee",
+            "year",
+            "month",
+            "sales_target",
+            "collection_target",
+            "visits_target",
+            "target_setby",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "target_setby",
+            "created_at",
+            "updated_at",
+        ]
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        user = request.user if request else None
+
+        # Check field permissions
+        if user and not user.is_owner:
+            # Check sales_target
+            if "sales_target" in attrs and not has_orders_manage_permission(user):
+                raise serializers.ValidationError(
+                    {"sales_target": "You do not have permission ('orders_manage') to set or update sales targets."}
+                )
+            # Check collection_target
+            if "collection_target" in attrs and not has_collection_manage_permission(user):
+                raise serializers.ValidationError(
+                    {"collection_target": "You do not have permission ('collection_manage') to set or update collection targets."}
+                )
+            # Check visits_target
+            if "visits_target" in attrs and not has_visit_manage_permission(user):
+                raise serializers.ValidationError(
+                    {"visits_target": "You do not have permission ('visit_manage') to set or update visits targets."}
+                )
+
+        # Unique constraint check on create
+        if not self.instance:
+            employee = attrs.get("employee")
+            year = attrs.get("year")
+            month = attrs.get("month")
+            if employee and year and month:
+                if MonthlyTarget.objects.filter(employee=employee, year=year, month=month).exists():
+                    raise serializers.ValidationError(
+                        {"non_field_errors": [f"Monthly target already exists for employee '{employee.username}' for {month}/{year}."]}
+                    )
+
+        return attrs
+
+
+class SpecialTargetSerializer(serializers.ModelSerializer):
+    """Serializer used for reading SpecialTarget (both admin and employee GET)."""
+    employee_details = SimpleEmployeeSummarySerializer(source="employee", read_only=True)
+    target_setby_details = SimpleEmployeeSummarySerializer(source="target_setby", read_only=True)
+
+    class Meta:
+        model = SpecialTarget
+        fields = [
+            "id",
+            "employee",
+            "employee_details",
+            "title",
+            "from_date",
+            "to_date",
+            "sales_target",
+            "collection_target",
+            "visits_target",
+            "target_setby",
+            "target_setby_details",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "target_setby",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class AdminSpecialTargetWriteSerializer(serializers.ModelSerializer):
+    """
+    Serializer used for creating (POST) and updating (PATCH) SpecialTarget.
+    Enforces field-level permissions and date range validation.
+    """
+    class Meta:
+        model = SpecialTarget
+        fields = [
+            "id",
+            "employee",
+            "title",
+            "from_date",
+            "to_date",
+            "sales_target",
+            "collection_target",
+            "visits_target",
+            "target_setby",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "target_setby",
+            "created_at",
+            "updated_at",
+        ]
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        user = request.user if request else None
+
+        # Check field permissions
+        if user and not user.is_owner:
+            # Check sales_target
+            if "sales_target" in attrs and not has_orders_manage_permission(user):
+                raise serializers.ValidationError(
+                    {"sales_target": "You do not have permission ('orders_manage') to set or update sales targets."}
+                )
+            # Check collection_target
+            if "collection_target" in attrs and not has_collection_manage_permission(user):
+                raise serializers.ValidationError(
+                    {"collection_target": "You do not have permission ('collection_manage') to set or update collection targets."}
+                )
+            # Check visits_target
+            if "visits_target" in attrs and not has_visit_manage_permission(user):
+                raise serializers.ValidationError(
+                    {"visits_target": "You do not have permission ('visit_manage') to set or update visits targets."}
+                )
+
+        from_date = attrs.get("from_date", getattr(self.instance, "from_date", None))
+        to_date = attrs.get("to_date", getattr(self.instance, "to_date", None))
+
+        if from_date and to_date and to_date < from_date:
+            raise serializers.ValidationError(
+                {"to_date": "to_date cannot be earlier than from_date."}
+            )
+
+        return attrs
+

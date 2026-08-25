@@ -17,8 +17,9 @@ from users.permissions import (
     RoleBasedPermission,
     IsOwnerOrOrdersManage,
     IsOwnerOrCollectionManage,
+    IsTargetAdmin,
 )
-from .models import Product, Order, Collection
+from .models import Product, Order, Collection, MonthlyTarget, SpecialTarget
 from .serializers import (
     ProductSerializer,
     CollectionSerializer,
@@ -27,6 +28,10 @@ from .serializers import (
     OrderCreatedResponseSerializer,
     OrderListSerializer,
     OrderSummarySerializer,
+    MonthlyTargetSerializer,
+    AdminMonthlyTargetWriteSerializer,
+    SpecialTargetSerializer,
+    AdminSpecialTargetWriteSerializer,
 )
 
 
@@ -675,4 +680,142 @@ class AdminCollectionApproveView(APIView):
         if collection.order:
             collection.order.update_status()
         return Response(CollectionSerializer(collection).data, status=status.HTTP_200_OK)
+
+
+# ---------------------------------------------------------------------------
+# Sales Targets ViewSets (Admin & Employee)
+# ---------------------------------------------------------------------------
+
+class AdminMonthlyTargetViewSet(viewsets.ModelViewSet):
+    """
+    Admin endpoint for Monthly Targets.
+    GET /api/admin/sales/monthly-targets/ (list with optional ?employee_id=, ?year=, ?month=)
+    POST /api/admin/sales/monthly-targets/ (create monthly target)
+    GET /api/admin/sales/monthly-targets/{id}/ (retrieve detail)
+    PATCH /api/admin/sales/monthly-targets/{id}/ (partial update)
+
+    Restricted to Owner or users with at least one of:
+    'orders_manage', 'collection_manage', 'visit_manage'.
+    """
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
+    permission_classes = [IsAuthenticated, MustChangePasswordPermission, IsTargetAdmin]
+    queryset = MonthlyTarget.objects.select_related("employee", "target_setby").all()
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        employee_id = self.request.query_params.get("employee_id")
+        year = self.request.query_params.get("year")
+        month = self.request.query_params.get("month")
+
+        if employee_id:
+            qs = qs.filter(employee_id=employee_id)
+        if year:
+            qs = qs.filter(year=year)
+        if month:
+            qs = qs.filter(month=month)
+        return qs
+
+    def get_serializer_class(self):
+        if self.action in ['create', 'partial_update', 'update']:
+            return AdminMonthlyTargetWriteSerializer
+        return MonthlyTargetSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save(target_setby=request.user)
+        read_serializer = MonthlyTargetSerializer(instance)
+        return Response(read_serializer.data, status=status.HTTP_201_CREATED)
+
+    def partial_update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        updated_instance = serializer.save(target_setby=request.user)
+        read_serializer = MonthlyTargetSerializer(updated_instance)
+        return Response(read_serializer.data, status=status.HTTP_200_OK)
+
+
+class AdminSpecialTargetViewSet(viewsets.ModelViewSet):
+    """
+    Admin endpoint for Special Targets.
+    GET /api/admin/sales/special-targets/ (list with optional ?employee_id=, ?from_date=, ?to_date=)
+    POST /api/admin/sales/special-targets/ (create special target)
+    GET /api/admin/sales/special-targets/{id}/ (retrieve detail)
+    PATCH /api/admin/sales/special-targets/{id}/ (partial update)
+
+    Restricted to Owner or users with at least one of:
+    'orders_manage', 'collection_manage', 'visit_manage'.
+    """
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
+    permission_classes = [IsAuthenticated, MustChangePasswordPermission, IsTargetAdmin]
+    queryset = SpecialTarget.objects.select_related("employee", "target_setby").all()
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        employee_id = self.request.query_params.get("employee_id")
+        from_date = self.request.query_params.get("from_date")
+        to_date = self.request.query_params.get("to_date")
+
+        if employee_id:
+            qs = qs.filter(employee_id=employee_id)
+        if from_date:
+            qs = qs.filter(from_date__gte=from_date)
+        if to_date:
+            qs = qs.filter(to_date__lte=to_date)
+        return qs
+
+    def get_serializer_class(self):
+        if self.action in ['create', 'partial_update', 'update']:
+            return AdminSpecialTargetWriteSerializer
+        return SpecialTargetSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save(target_setby=request.user)
+        read_serializer = SpecialTargetSerializer(instance)
+        return Response(read_serializer.data, status=status.HTTP_201_CREATED)
+
+    def partial_update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        updated_instance = serializer.save(target_setby=request.user)
+        read_serializer = SpecialTargetSerializer(updated_instance)
+        return Response(read_serializer.data, status=status.HTTP_200_OK)
+
+
+class EmployeeMonthlyTargetViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Employee endpoint to view their own monthly targets.
+    GET /api/sales/monthly-targets/ (list own targets with optional ?year=, ?month=)
+    GET /api/sales/monthly-targets/{id}/ (retrieve own target)
+    """
+    permission_classes = [IsAuthenticated, MustChangePasswordPermission]
+    serializer_class = MonthlyTargetSerializer
+
+    def get_queryset(self):
+        qs = MonthlyTarget.objects.select_related("employee", "target_setby").filter(employee=self.request.user)
+        year = self.request.query_params.get("year")
+        month = self.request.query_params.get("month")
+        if year:
+            qs = qs.filter(year=year)
+        if month:
+            qs = qs.filter(month=month)
+        return qs
+
+
+class EmployeeSpecialTargetViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Employee endpoint to view their own special targets.
+    GET /api/sales/special-targets/ (list own special targets)
+    GET /api/sales/special-targets/{id}/ (retrieve own special target)
+    """
+    permission_classes = [IsAuthenticated, MustChangePasswordPermission]
+    serializer_class = SpecialTargetSerializer
+
+    def get_queryset(self):
+        return SpecialTarget.objects.select_related("employee", "target_setby").filter(employee=self.request.user)
+
 

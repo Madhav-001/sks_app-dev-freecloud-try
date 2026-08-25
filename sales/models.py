@@ -1,4 +1,5 @@
 import uuid
+from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 from django.db.models import Sum
 from users.models import Employee
@@ -205,36 +206,120 @@ class Collection(SoftDeleteModelMixin, models.Model):
 
 class MonthlyTarget(models.Model):
     """
-    Monthly target record for an employee.
-    One record per employee per year/month.
-    Set/updated by authorized Admin/Manager users according to role hierarchy.
+    Standard monthly KPI target for a sales employee.
+    Enforces exactly one target per employee per month/year.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     employee = models.ForeignKey(
-        Employee, on_delete=models.CASCADE, related_name="monthly_targets"
+        Employee,
+        on_delete=models.CASCADE,
+        related_name="monthly_targets",
+        help_text="The sales employee this target is assigned to"
     )
-    year = models.PositiveIntegerField()
+    year = models.PositiveIntegerField(
+        validators=[MinValueValidator(2020), MaxValueValidator(2100)],
+        help_text="Target year (e.g. 2026)"
+    )
     month = models.PositiveSmallIntegerField(
-        help_text="Month number (1-12)"
+        validators=[MinValueValidator(1), MaxValueValidator(12)],
+        help_text="Target month (1 to 12)"
     )
+
     sales_target = models.DecimalField(
-        max_digits=12, decimal_places=2, default=0.00
+        max_digits=14, decimal_places=2, default=0.00,
+        help_text="Target sales amount in currency"
     )
     collection_target = models.DecimalField(
-        max_digits=12, decimal_places=2, default=0.00
+        max_digits=14, decimal_places=2, default=0.00,
+        help_text="Target collection amount in currency"
     )
-    visit_target = models.PositiveIntegerField(default=0)
+    visits_target = models.PositiveIntegerField(
+        default=0,
+        help_text="Target dealer/subdealer visits count"
+    )
+
+    target_setby = models.ForeignKey(
+        Employee,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="set_monthly_targets",
+        help_text="Admin who set or last updated this target"
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = [("employee", "year", "month")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["employee", "year", "month"],
+                name="unique_employee_monthly_target"
+            )
+        ]
         indexes = [
             models.Index(fields=["employee", "year", "month"]),
+            models.Index(fields=["year", "month"]),
         ]
         ordering = ["-year", "-month"]
 
     def __str__(self):
-        return f"MonthlyTarget {self.employee.username} ({self.year}-{self.month:02d})"
+        return f"{self.employee.username} - {self.month}/{self.year} Target"
+
+
+class SpecialTarget(models.Model):
+    """
+    Ad-hoc / Campaign / Festive / Sprint target for specific date ranges.
+    Can overlap with regular monthly targets.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    employee = models.ForeignKey(
+        Employee,
+        on_delete=models.CASCADE,
+        related_name="special_targets",
+        help_text="The sales employee this target is assigned to"
+    )
+    title = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="Campaign name e.g., 'Diwali Sprint 2026'"
+    )
+    from_date = models.DateField(help_text="Target duration start date")
+    to_date = models.DateField(help_text="Target duration end date")
+
+    sales_target = models.DecimalField(
+        max_digits=14, decimal_places=2, default=0.00,
+        help_text="Target sales amount in currency"
+    )
+    collection_target = models.DecimalField(
+        max_digits=14, decimal_places=2, default=0.00,
+        help_text="Target collection amount in currency"
+    )
+    visits_target = models.PositiveIntegerField(
+        default=0,
+        help_text="Target dealer/subdealer visits count"
+    )
+
+    target_setby = models.ForeignKey(
+        Employee,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="set_special_targets",
+        help_text="Admin who set or last updated this target"
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["employee", "from_date", "to_date"]),
+            models.Index(fields=["from_date", "to_date"]),
+        ]
+        ordering = ["-from_date"]
+
+    def __str__(self):
+        return f"{self.employee.username} - Special Target ({self.from_date} to {self.to_date})"
 

@@ -1,55 +1,16 @@
 from rest_framework import serializers
-from .models import Attendance, Visit, Milage, VisitPlan
+from .models import Attendance, Visit, Milage
 
 
 class AttendanceStartSerializer(serializers.ModelSerializer):
     image = serializers.ImageField(source='start_image')
-    date = serializers.DateField(required=False)
-    time = serializers.TimeField(source='start_time', format='%H:%M:%S', input_formats=['%H:%M:%S', '%H:%M'], required=False)
-    latitude = serializers.FloatField(source='start_latitude', required=False, allow_null=True)
-    longitude = serializers.FloatField(source='start_longitude', required=False, allow_null=True)
-
-    daily_sales_target = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, default=0.00)
-    daily_collection_target = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, default=0.00)
-    daily_visit_target = serializers.IntegerField(required=False, default=0)
-    today_visit_plan = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    time = serializers.TimeField(source='start_time', format='%H:%M:%S', input_formats=['%H:%M:%S', '%H:%M'])
+    latitude = serializers.FloatField(source='start_latitude')
+    longitude = serializers.FloatField(source='start_longitude')
 
     class Meta:
         model = Attendance
-        fields = [
-            'image', 'start_km', 'date', 'time', 'latitude', 'longitude',
-            'daily_sales_target', 'daily_collection_target', 'daily_visit_target', 'today_visit_plan'
-        ]
-
-    def to_internal_value(self, data):
-        # Support aliases: sales_target, collection_target, visit_target, visit_plan
-        mutable_data = data.copy() if hasattr(data, 'copy') else dict(data)
-        if 'sales_target' in mutable_data and 'daily_sales_target' not in mutable_data:
-            mutable_data['daily_sales_target'] = mutable_data['sales_target']
-        if 'collection_target' in mutable_data and 'daily_collection_target' not in mutable_data:
-            mutable_data['daily_collection_target'] = mutable_data['collection_target']
-        if 'visit_target' in mutable_data and 'daily_visit_target' not in mutable_data:
-            mutable_data['daily_visit_target'] = mutable_data['visit_target']
-        if 'visit_plan' in mutable_data and 'today_visit_plan' not in mutable_data:
-            mutable_data['today_visit_plan'] = mutable_data['visit_plan']
-        return super().to_internal_value(mutable_data)
-
-
-class VisitPlanSerializer(serializers.ModelSerializer):
-    employee_id = serializers.UUIDField(source='employee.id', read_only=True)
-    employee_name = serializers.SerializerMethodField()
-
-    class Meta:
-        model = VisitPlan
-        fields = [
-            'id', 'employee_id', 'employee_name', 'plan_date', 'area',
-            'visit_target', 'created_at', 'updated_at'
-        ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
-
-    def get_employee_name(self, obj):
-        return obj.employee.name or obj.employee.username
-
+        fields = ['image', 'start_km', 'date', 'time', 'latitude', 'longitude']
 
 
 

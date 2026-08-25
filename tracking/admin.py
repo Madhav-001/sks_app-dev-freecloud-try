@@ -1,29 +1,11 @@
 from django.contrib import admin
-from .models import Attendance, Visit, Milage, VisitPlan
+from .models import Attendance, Visit, Milage
 
 
 @admin.register(Attendance)
 class AttendanceAdmin(admin.ModelAdmin):
-    list_display = (
-        "id",
-        "employee",
-        "date",
-        "start_km",
-        "end_km",
-        "total_km",
-        "daily_sales_target",
-        "daily_collection_target",
-        "daily_visit_target",
-    )
+    list_display = ("id", "employee", "date", "start_km", "end_km", "total_km")
     list_filter = ("date", "employee")
-
-
-@admin.register(VisitPlan)
-class VisitPlanAdmin(admin.ModelAdmin):
-    list_display = ("id", "employee", "plan_date", "area", "visit_target", "created_at")
-    list_filter = ("plan_date", "employee")
-    search_fields = ("employee__username", "employee__name", "area")
-
 
 
 @admin.register(Visit)
@@ -64,6 +46,7 @@ class MilageAdmin(admin.ModelAdmin):
         "total_distance_travelled",
         "return_to_home",
         "updated_at",
+        "created_at",
     )
     list_filter = ("date", "employee")
     readonly_fields = (

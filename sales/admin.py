@@ -1,6 +1,6 @@
 from django.contrib import admin
 from admin_mixins import SoftDeleteAdminMixin
-from .models import Product, Order, OrderItem, Collection
+from .models import Product, Order, OrderItem, Collection, MonthlyTarget, SpecialTarget
 
 
 class OrderItemInline(admin.TabularInline):
@@ -81,6 +81,7 @@ class CollectionAdmin(SoftDeleteAdminMixin, admin.ModelAdmin):
     use_soft_delete_manager = True  # Collection uses SoftDeleteManager
 
     list_display = (
+        "id",
         "order",
         "sub_dealer",
         "employee",
@@ -88,14 +89,13 @@ class CollectionAdmin(SoftDeleteAdminMixin, admin.ModelAdmin):
         "payment_type",
         "status",
         "is_deleted",
+        "updated_at",
+        "created_at",
     )
     list_filter = ("is_deleted", "status", "payment_type", "employee")
 
     def get_queryset(self, request):
         return Collection._default_manager.all_with_deleted()
-
-
-from .models import MonthlyTarget
 
 
 @admin.register(MonthlyTarget)
@@ -107,9 +107,30 @@ class MonthlyTargetAdmin(admin.ModelAdmin):
         "month",
         "sales_target",
         "collection_target",
-        "visit_target",
+        "visits_target",
+        "target_setby",
+        "updated_at",
         "created_at",
     )
     list_filter = ("year", "month", "employee")
     search_fields = ("employee__username", "employee__name")
+
+
+@admin.register(SpecialTarget)
+class SpecialTargetAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "employee",
+        "title",
+        "from_date",
+        "to_date",
+        "sales_target",
+        "collection_target",
+        "visits_target",
+        "target_setby",
+        "updated_at",
+        "created_at",
+    )
+    list_filter = ("from_date", "to_date", "employee")
+    search_fields = ("employee__username", "employee__name", "title")
 

@@ -20,14 +20,15 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 INSTALLED_APPS = [
-    "corsheaders",
+    'cloudinary_storage',
+    'django.contrib.staticfiles',
+    'cloudinary',
 
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
-    "django.contrib.staticfiles",
     "rest_framework",
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
@@ -41,12 +42,9 @@ INSTALLED_APPS = [
     "communication",
     "storages",
     "notifications",
-    "reports",
 ]
 
 MIDDLEWARE = [
-    'corsheaders.middleware.CorsMiddleware',
-
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -54,14 +52,6 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-]
-
-# Add your Firebase domain here:
-CORS_ALLOWED_ORIGINS = [
-    "https://sri-kumaran-steels.web.app",
-    "https://sri-kumaran-steels.firebaseapp.com",
-    "http://localhost:5173",   # for local dev
-    "http://localhost:3000",   # for local dev
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -89,12 +79,11 @@ DATABASES = {
     )
 }
 
+
 # print(DATABASES)
 
 AUTH_PASSWORD_VALIDATORS = [
-    {
-        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"
-    },
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
@@ -158,50 +147,21 @@ SIMPLE_JWT = {
     "SLIDING_TOKEN_REFRESH_LIFETIME": timedelta(days=1),
 }
 
-# AWS / S3 Configuration
-AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
-AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
-AWS_S3_REGION_NAME = os.getenv("AWS_REGION", "ap-south-2")
-AWS_STORAGE_BUCKET_NAME = os.getenv("AWS_STORAGE_BUCKET_NAME", "sks")
-
-S3_ENDPOINT = os.getenv("S3_ENDPOINT")
-if S3_ENDPOINT:
-    # Only use endpoint_url for local MinIO
-    AWS_S3_ENDPOINT_URL = S3_ENDPOINT
-    AWS_S3_ADDRESSING_STYLE = "path"  # Often required for MinIO
-else:
-    # For newer S3 regions like ap-south-2, specify the regional endpoint URL to avoid global routing errors
-    AWS_S3_ENDPOINT_URL = f"https://s3.{AWS_S3_REGION_NAME}.amazonaws.com"
-
-AWS_S3_SIGNATURE_VERSION = "s3v4"
-AWS_S3_FILE_OVERWRITE = False
-AWS_DEFAULT_ACL = None
-
-# Ensure temporary, dynamic presigned S3 URLs are generated fresh for every request
-AWS_QUERYSTRING_AUTH = True
-AWS_QUERYSTRING_EXPIRE = 1800  # Expires in 30 minutes
+# Cloudinary Storage Configuration
+CLOUDINARY_STORAGE = {
+    'CLOUD_NAME': os.getenv('CLOUDINARY_CLOUD_NAME'),
+    'API_KEY': os.getenv('CLOUDINARY_API_KEY'),
+    'API_SECRET': os.getenv('CLOUDINARY_API_SECRET'),
+}
+# Keep only non-empty credentials so CLOUDINARY_URL in .env works automatically
+CLOUDINARY_STORAGE = {k: v for k, v in CLOUDINARY_STORAGE.items() if v}
 
 STORAGES = {
     "default": {
-        "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+        "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
     },
     "staticfiles": {
         "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
     },
 }
-
-import sys
-if "test" in sys.argv or any("pytest" in arg for arg in sys.argv):
-    MIGRATION_MODULES = {
-        "token_blacklist": None,
-    }
-    STORAGES = {
-        "default": {
-            "BACKEND": "django.core.files.storage.InMemoryStorage",
-        },
-        "staticfiles": {
-            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
-        },
-    }
-
 

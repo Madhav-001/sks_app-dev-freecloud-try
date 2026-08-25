@@ -1,9 +1,12 @@
 import json
-from datetime import datetime
+from datetime import datetime, date
 from rest_framework import status, response, parsers, viewsets, mixins
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
+from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import CursorPagination
+from django.shortcuts import get_object_or_404
 from .models import Attendance, Visit, Milage
 from .serializers import (
     AttendanceSerializer,
@@ -15,9 +18,20 @@ from .serializers import (
     MilageSerializer,
     AdminDailyMilageSerializer,
 )
+from .report_serializers import (
+    SODInputSerializer,
+    SODReportResponseSerializer,
+    EODInputSerializer,
+    EODReportResponseSerializer,
+)
+from .report_service import (
+    calculate_sod_data,
+    calculate_eod_data,
+    get_attendance_for_date,
+)
 from .distance_serializers import get_active_distance_serializer
 from users.models import Employee
-from users.permissions import IsAdminManagerOrOwner, RoleBasedPermission, is_admin_of
+from users.permissions import IsAdminManagerOrOwner, RoleBasedPermission, is_admin_of, MustChangePasswordPermission
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 
@@ -103,10 +117,6 @@ class AttendanceViewSet(viewsets.GenericViewSet):
             "end_time": att.end_time.strftime("%H:%M:%S") if att.end_time else None,
             "total_km": int(att.total_km) if att.total_km is not None else None,
             "total_time": total_time_str,
-            "daily_sales_target": float(att.daily_sales_target) if att.daily_sales_target is not None else 0.0,
-            "daily_collection_target": float(att.daily_collection_target) if att.daily_collection_target is not None else 0.0,
-            "daily_visit_target": att.daily_visit_target or 0,
-            "today_visit_plan": att.today_visit_plan,
             "created_at": created_at_str,
             "updated_at": updated_at_str,
         }
@@ -1759,3 +1769,165 @@ class AdminEmployeeMilageSummaryView(viewsets.GenericViewSet):
             },
             status=status.HTTP_200_OK,
         )
+
+
+# ---------------------------------------------------------------------------
+# SOD (Start of Day) & EOD (End of Day) Daily Report Views
+# ---------------------------------------------------------------------------
+
+def _parse_report_date(date_val):
+    if not date_val:
+        return timezone.localdate()
+    if isinstance(date_val, date):
+        return date_val
+    for fmt in ("%Y-%m-%d", "%d:%m:%Y", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(str(date_val).strip(), fmt).date()
+        except ValueError:
+            continue
+    raise ValidationError({"date": f"Invalid date format '{date_val}'. Expected YYYY-MM-DD or DD:MM:YYYY or DD/MM/YYYY."})
+
+
+class SODReportView(APIView):
+    """
+    Start of Day (SOD) report API for salesman.
+    GET /api/tracking/sod/?date=YYYY-MM-DD
+    POST /api/tracking/sod/
+    PATCH /api/tracking/sod/
+    """
+    permission_classes = [IsAuthenticated, MustChangePasswordPermission]
+
+    @extend_schema(
+        summary="Get Start of Day (SOD) report calculation for authenticated employee",
+        responses={200: SODReportResponseSerializer},
+    )
+    def get(self, request):
+        target_date = _parse_report_date(request.query_params.get("date"))
+        data = calculate_sod_data(request.user, target_date)
+        return response.Response(data, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        summary="Save or update Start of Day (SOD) daily targets on Attendance",
+        request=SODInputSerializer,
+        responses={200: SODReportResponseSerializer},
+    )
+    def post(self, request):
+        return self._save_sod(request)
+
+    @extend_schema(
+        summary="Partial update Start of Day (SOD) daily targets on Attendance",
+        request=SODInputSerializer,
+        responses={200: SODReportResponseSerializer},
+    )
+    def patch(self, request):
+        return self._save_sod(request)
+
+    def _save_sod(self, request):
+        serializer = SODInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        validated_data = serializer.validated_data
+
+        target_date = _parse_report_date(validated_data.get("date") or request.query_params.get("date"))
+        attendance, _ = get_attendance_for_date(request.user, target_date)
+
+        if "today_sales_target" in validated_data:
+            attendance.sod_sales_target = validated_data["today_sales_target"]
+        if "today_collection_target" in validated_data:
+            attendance.sod_collection_target = validated_data["today_collection_target"]
+        if "today_visits_target" in validated_data:
+            attendance.sod_visits_target = validated_data["today_visits_target"]
+        if "today_market_plan" in validated_data:
+            attendance.sod_market_plan = validated_data["today_market_plan"]
+
+        attendance.save()
+        data = calculate_sod_data(request.user, target_date, attendance=attendance)
+        return response.Response(data, status=status.HTTP_200_OK)
+
+
+class EODReportView(APIView):
+    """
+    End of Day (EOD) evening report API for salesman.
+    GET /api/tracking/eod/?date=YYYY-MM-DD
+    POST /api/tracking/eod/
+    PATCH /api/tracking/eod/
+    """
+    permission_classes = [IsAuthenticated, MustChangePasswordPermission]
+
+    @extend_schema(
+        summary="Get End of Day (EOD) evening report summary for authenticated employee",
+        responses={200: EODReportResponseSerializer},
+    )
+    def get(self, request):
+        target_date = _parse_report_date(request.query_params.get("date"))
+        data = calculate_eod_data(request.user, target_date)
+        return response.Response(data, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        summary="Save or update End of Day (EOD) report details on Attendance",
+        request=EODInputSerializer,
+        responses={200: EODReportResponseSerializer},
+    )
+    def post(self, request):
+        return self._save_eod(request)
+
+    @extend_schema(
+        summary="Partial update End of Day (EOD) report details on Attendance",
+        request=EODInputSerializer,
+        responses={200: EODReportResponseSerializer},
+    )
+    def patch(self, request):
+        return self._save_eod(request)
+
+    def _save_eod(self, request):
+        serializer = EODInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        validated_data = serializer.validated_data
+
+        target_date = _parse_report_date(validated_data.get("date") or request.query_params.get("date"))
+        attendance, _ = get_attendance_for_date(request.user, target_date)
+
+        if "visited_areas" in validated_data:
+            attendance.eod_visited_areas = validated_data["visited_areas"]
+        if "tomorrow_plan" in validated_data:
+            attendance.eod_tomorrow_plan = validated_data["tomorrow_plan"]
+
+        attendance.save()
+        data = calculate_eod_data(request.user, target_date, attendance=attendance)
+        return response.Response(data, status=status.HTTP_200_OK)
+
+
+class AdminSODReportView(APIView):
+    """
+    Admin endpoint to view SOD report of any employee.
+    GET /api/admin/tracking/sod/{employee_id}/?date=YYYY-MM-DD
+    """
+    permission_classes = [IsAuthenticated, MustChangePasswordPermission, IsAdminManagerOrOwner]
+
+    @extend_schema(
+        summary="Get Start of Day (SOD) report calculation for specified employee (Admin)",
+        responses={200: SODReportResponseSerializer},
+    )
+    def get(self, request, employee_id):
+        target_employee = get_object_or_404(Employee, pk=employee_id)
+        target_date = _parse_report_date(request.query_params.get("date"))
+        data = calculate_sod_data(target_employee, target_date)
+        return response.Response(data, status=status.HTTP_200_OK)
+
+
+class AdminEODReportView(APIView):
+    """
+    Admin endpoint to view EOD report of any employee.
+    GET /api/admin/tracking/eod/{employee_id}/?date=YYYY-MM-DD
+    """
+    permission_classes = [IsAuthenticated, MustChangePasswordPermission, IsAdminManagerOrOwner]
+
+    @extend_schema(
+        summary="Get End of Day (EOD) report summary for specified employee (Admin)",
+        responses={200: EODReportResponseSerializer},
+    )
+    def get(self, request, employee_id):
+        target_employee = get_object_or_404(Employee, pk=employee_id)
+        target_date = _parse_report_date(request.query_params.get("date"))
+        data = calculate_eod_data(target_employee, target_date)
+        return response.Response(data, status=status.HTTP_200_OK)
+

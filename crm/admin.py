@@ -14,6 +14,7 @@ class LeadAdmin(SoftDeleteAdminMixin, admin.ModelAdmin):
     use_soft_delete_manager = False
 
     list_display = (
+        "id",
         "name",
         "company_name",
         "phone",
@@ -38,6 +39,6 @@ class CustomerAdmin(SoftDeleteAdminMixin, admin.ModelAdmin):
     # Customer uses Django's default manager (no SoftDeleteManager).
     use_soft_delete_manager = False
 
-    list_display = ("name", "phone", "email", "is_deleted", "deleted_at")
+    list_display = ("id", "name", "phone", "email", "is_deleted", "deleted_at")
     list_filter = ("is_deleted",)
     search_fields = ("name", "phone", "email")

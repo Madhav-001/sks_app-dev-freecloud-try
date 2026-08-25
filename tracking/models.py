@@ -29,18 +29,39 @@ class Attendance(models.Model):
     total_time = models.DurationField(null=True, blank=True)
     auto_checkout = models.BooleanField(default=False)
 
-    # Daily targets entered during check-in
-    daily_sales_target = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True, default=0.00)
-    daily_collection_target = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True, default=0.00)
-    daily_visit_target = models.PositiveIntegerField(null=True, blank=True, default=0)
-    today_visit_plan = models.TextField(null=True, blank=True)
+    # ── Daily Start of Day (SOD) Plan / Target fields ─────────────────────────
+    sod_sales_target = models.DecimalField(
+        max_digits=14, decimal_places=2, null=True, blank=True, default=0.00,
+        help_text="Today's sales target submitted in SOD"
+    )
+    sod_collection_target = models.DecimalField(
+        max_digits=14, decimal_places=2, null=True, blank=True, default=0.00,
+        help_text="Today's collection target submitted in SOD"
+    )
+    sod_visits_target = models.PositiveIntegerField(
+        null=True, blank=True, default=0,
+        help_text="Today's counter visit target count submitted in SOD"
+    )
+    sod_market_plan = models.TextField(
+        null=True, blank=True, default="",
+        help_text="Today's market visit plan area/meeting submitted in SOD"
+    )
+
+    # ── Daily End of Day (EOD) Report fields ──────────────────────────────────
+    eod_visited_areas = models.TextField(
+        null=True, blank=True, default="",
+        help_text="Today's visited areas submitted in EOD report"
+    )
+    eod_tomorrow_plan = models.TextField(
+        null=True, blank=True, default="",
+        help_text="Tomorrow visit plan area submitted in EOD report"
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         indexes = [models.Index(fields=["employee", "created_at"])]
-
 
 
 class Visit(models.Model):
@@ -120,29 +141,3 @@ class Milage(models.Model):
         # One record per employee per working day.
         unique_together = [("employee", "date")]
         indexes = [models.Index(fields=["employee", "date"])]
-
-
-class VisitPlan(models.Model):
-    """
-    Tomorrow's / planned visit plan for an employee.
-    Unique per employee + plan_date.
-    """
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    employee = models.ForeignKey(
-        Employee, on_delete=models.CASCADE, related_name="visit_plans"
-    )
-    plan_date = models.DateField()
-    area = models.CharField(max_length=255)
-    visit_target = models.PositiveIntegerField(default=0)
-
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        unique_together = [("employee", "plan_date")]
-        indexes = [models.Index(fields=["employee", "plan_date"])]
-        ordering = ["-plan_date"]
-
-    def __str__(self):
-        return f"VisitPlan {self.employee.username} on {self.plan_date} ({self.area})"
-

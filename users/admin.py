@@ -54,7 +54,7 @@ class EmployeeAdmin(SoftDeleteAdminMixin, UserAdmin):
 
 @admin.register(LoginHistory)
 class LoginHistoryAdmin(admin.ModelAdmin):
-    list_display = ("employee", "login_at", "logout_at", "ip_address", "status")
+    list_display = ("id", "employee", "login_at", "logout_at", "ip_address", "status")
     list_filter = ("status", "employee")
     readonly_fields = ("employee", "login_at", "ip_address", "user_agent")
 

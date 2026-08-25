@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import AttendanceViewSet, VisitViewSet, MilageViewSet
+from .views import AttendanceViewSet, VisitViewSet, MilageViewSet, SODReportView, EODReportView
 
 router = DefaultRouter(trailing_slash=True)
 router.register('visit', VisitViewSet, basename='visit')
@@ -20,6 +20,9 @@ urlpatterns = [
         'get': 'retrieve',
         'patch': 'partial_update',
     }), name='attendance-detail'),
+    # SOD (Start of Day) & EOD (End of Day) Reports
+    path('sod/', SODReportView.as_view(), name='sod-report'),
+    path('eod/', EODReportView.as_view(), name='eod-report'),
     # Milage — daily cumulative summary
     path('milage/summary/', MilageViewSet.as_view({'get': 'milage_summary'}), name='milage-summary'),
     path('', include(router.urls)),

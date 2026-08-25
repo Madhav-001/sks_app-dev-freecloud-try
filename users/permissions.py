@@ -82,6 +82,29 @@ def has_collection_manage_permission(user):
     return bool(user.role and user.role.collection_manage)
 
 
+def has_visit_manage_permission(user):
+    """True if user is Owner/superuser or has visit_manage=True in EmployeeRole."""
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_owner:
+        return True
+    return bool(user.role and user.role.visit_manage)
+
+
+def has_any_target_manage_permission(user):
+    """
+    True if user is Owner/superuser or has at least one of:
+    orders_manage, collection_manage, or visit_manage.
+    """
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_owner:
+        return True
+    if not user.role:
+        return False
+    return bool(user.role.orders_manage or user.role.collection_manage or user.role.visit_manage)
+
+
 # ---------------------------------------------------------------------------
 # Permission classes
 # ---------------------------------------------------------------------------
@@ -171,6 +194,17 @@ class IsOwnerOrCollectionManage(permissions.BasePermission):
 
     def has_permission(self, request, view):
         return has_collection_manage_permission(request.user)
+
+
+class IsTargetAdmin(permissions.BasePermission):
+    """
+    Allows access only to Owner/superuser or roles with at least one of
+    orders_manage=True, collection_manage=True, or visit_manage=True.
+    """
+    message = "You do not have permission to manage targets. Contact your administrator."
+
+    def has_permission(self, request, view):
+        return has_any_target_manage_permission(request.user)
 
 
 # ---------------------------------------------------------------------------

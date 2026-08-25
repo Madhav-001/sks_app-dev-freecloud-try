@@ -1,5 +1,11 @@
 from django.urls import path
-from .views import AttendanceViewSet, AdminDailyMilageView, AdminEmployeeMilageSummaryView
+from .views import (
+    AttendanceViewSet,
+    AdminDailyMilageView,
+    AdminEmployeeMilageSummaryView,
+    AdminSODReportView,
+    AdminEODReportView,
+)
 
 urlpatterns = [
     # ── Attendance ──────────────────────────────────────────────────────────
@@ -14,6 +20,12 @@ urlpatterns = [
     # Full monthly attendance details for one employee
     # GET /api/admin/tracking/attendance/<user_id>/?month=7&year=2026
     path('attendance/<uuid:user_id>/', AttendanceViewSet.as_view({'get': 'admin_employee_attendance'}), name='admin-employee-attendance'),
+
+    # ── SOD & EOD Admin Views ───────────────────────────────────────────────
+    # GET /api/admin/tracking/sod/<employee_id>/?date=YYYY-MM-DD
+    path('sod/<uuid:employee_id>/', AdminSODReportView.as_view(), name='admin-sod-report'),
+    # GET /api/admin/tracking/eod/<employee_id>/?date=YYYY-MM-DD
+    path('eod/<uuid:employee_id>/', AdminEODReportView.as_view(), name='admin-eod-report'),
 
     # ── Mileage ─────────────────────────────────────────────────────────────
 
