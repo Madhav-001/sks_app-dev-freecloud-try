@@ -122,10 +122,18 @@ class Employee(AbstractUser):
     @property
     def is_owner(self):
         """
-        True for the Owner account (null role FK) or Django superuser.
-        Owner has unrestricted access to everything.
+        True for:
+        - Django superuser (is_superuser=True)
+        - Superadmin account (employeeidnum=0)
+        - Owner role (null role FK, role name 'OWNER', or hierarchy_level=1)
         """
-        return self.is_superuser or self.role is None
+        if self.is_superuser or getattr(self, 'employeeidnum', None) == 0 or self.role is None:
+            return True
+        if self.role:
+            role_name = getattr(self.role, 'name', '') or ''
+            if role_name.upper() == 'OWNER' or getattr(self.role, 'hierarchy_level', 99) == 1:
+                return True
+        return False
 
     @property
     def hierarchy_level(self):
