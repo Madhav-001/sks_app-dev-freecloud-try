@@ -1,6 +1,7 @@
 """Django settings for config project."""
 
 import os
+import cloudinary
 import dj_database_url
 from pathlib import Path
 from datetime import timedelta
@@ -8,11 +9,18 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+cloudinary.config(
+    cloud_name=os.getenv('CLOUDINARY_CLOUD_NAME'),
+    api_key=os.getenv('CLOUDINARY_API_KEY'),
+    api_secret=os.getenv('CLOUDINARY_API_SECRET'),
+    api_proxy='http://proxy.server:3128',
+    secure=True
+)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = "django-insecure-CHANGE_ME_TO_SOMETHING_LONGER_THAN_32_BYTES"
-DEBUG = True
+DEBUG = False
 ALLOWED_HOSTS = [
     "localhost",
     "127.0.0.1",
