@@ -96,7 +96,9 @@ class EmployeeSerializer(serializers.ModelSerializer):
             'id', 'employeeidnum', 'name', 'username', 'email', 'phone',
             'profile_picture', 'house', 'street', 'district', 'state',
             'country', 'pincode', 'address', 'dob', 'date_of_join',
-            'blood_group', 'role', 'role_name', 'must_change_password', 'created_at', 'updated_at'
+            'blood_group', 'role', 'role_name', 'must_change_password',
+            'is_active', 'is_deleted',
+            'created_at', 'updated_at'
         ]
 
     def validate_employeeidnum(self, value):

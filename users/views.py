@@ -4,6 +4,9 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.utils import timezone
 from django.http import Http404
+from django.db.models import Q
+from drf_spectacular.utils import extend_schema, OpenApiParameter
+from drf_spectacular.types import OpenApiTypes
 from .models import Employee, LoginHistory, EmployeeRole
 from .serializers import (
     EmployeeSerializer,
@@ -86,9 +89,89 @@ class ChangePasswordView(generics.GenericAPIView):
 
 
 class EmployeeListView(generics.ListAPIView):
-    queryset = Employee.objects.filter(is_deleted=False)
     serializer_class = EmployeeSerializer
     permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="is_active",
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Filter by active status ('true'/'false'/'all').",
+            ),
+            OpenApiParameter(
+                name="is_deleted",
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Filter by soft-deleted status ('true'/'false'/'all'). Defaults to 'false' if not specified.",
+            ),
+            OpenApiParameter(
+                name="status",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Convenience filter for employee status: 'active', 'inactive', 'deleted', or 'all'.",
+            ),
+            OpenApiParameter(
+                name="role",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Filter by role name or role ID.",
+            ),
+        ],
+        responses={200: EmployeeSerializer(many=True)},
+        summary="List Employees",
+        description="Retrieve employee records with support for filtering by active and deleted status.",
+    )
+    def get_queryset(self):
+        queryset = Employee.objects.all()
+
+        status_param = self.request.query_params.get('status', '').strip().lower()
+        is_active_param = self.request.query_params.get('is_active', '').strip().lower()
+        is_deleted_param = self.request.query_params.get('is_deleted', '').strip().lower()
+        if not is_deleted_param:
+            is_deleted_param = self.request.query_params.get('deleted', '').strip().lower()
+
+        # 1. Handle status shortcut if provided
+        if status_param == 'active':
+            queryset = queryset.filter(is_active=True, is_deleted=False)
+        elif status_param == 'inactive':
+            queryset = queryset.filter(is_active=False, is_deleted=False)
+        elif status_param == 'deleted':
+            queryset = queryset.filter(is_deleted=True)
+        elif status_param == 'all':
+            pass
+        else:
+            # 2. Individual is_deleted filter (default to is_deleted=False)
+            if is_deleted_param in ('true', '1', 'yes'):
+                queryset = queryset.filter(is_deleted=True)
+            elif is_deleted_param in ('false', '0', 'no'):
+                queryset = queryset.filter(is_deleted=False)
+            elif is_deleted_param == 'all':
+                pass
+            else:
+                queryset = queryset.filter(is_deleted=False)
+
+            # 3. Individual is_active filter
+            if is_active_param in ('true', '1', 'yes'):
+                queryset = queryset.filter(is_active=True)
+            elif is_active_param in ('false', '0', 'no'):
+                queryset = queryset.filter(is_active=False)
+
+        # 4. Optional role filter
+        role_param = self.request.query_params.get('role', '').strip()
+        if role_param and role_param.lower() != 'all':
+            queryset = queryset.filter(
+                Q(role__name__iexact=role_param) |
+                Q(role__display_name__iexact=role_param) |
+                Q(role__id__iexact=role_param)
+            )
+
+        return queryset.order_by('employeeidnum')
 
 
 class EmployeeDetailView(generics.RetrieveUpdateDestroyAPIView):
