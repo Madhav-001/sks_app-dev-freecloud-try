@@ -288,8 +288,7 @@ class CustomTokenObtainPairSerializer(serializers.Serializer):
         data['must_change_password'] = self.user.must_change_password
         data['role'] = self.user.role_name
         data['role_id'] = str(self.user.role.id) if self.user.role else None
-
-
+        data['hierarchy_level'] = self.user.hierarchy_level
         data['name'] = self.user.name
         data['employeeidnum'] = self.user.employeeidnum
         return data
