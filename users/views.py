@@ -88,45 +88,45 @@ class ChangePasswordView(generics.GenericAPIView):
         return Response({"message": "Password updated successfully."}, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    parameters=[
+        OpenApiParameter(
+            name="is_deleted",
+            type=OpenApiTypes.BOOL,
+            location=OpenApiParameter.QUERY,
+            required=False,
+            description="Filter by soft-deleted status ('true'/'false'/'all'). Defaults to 'false' if not specified.",
+        ),
+        # OpenApiParameter(
+        #     name="is_active",
+        #     type=OpenApiTypes.BOOL,
+        #     location=OpenApiParameter.QUERY,
+        #     required=False,
+        #     description="Filter by active status ('true'/'false'/'all').",
+        # ),
+        # OpenApiParameter(
+        #     name="status",
+        #     type=OpenApiTypes.STR,
+        #     location=OpenApiParameter.QUERY,
+        #     required=False,
+        #     description="Convenience filter for employee status: 'active', 'inactive', 'deleted', or 'all'.",
+        # ),
+        # OpenApiParameter(
+        #     name="role",
+        #     type=OpenApiTypes.STR,
+        #     location=OpenApiParameter.QUERY,
+        #     required=False,
+        #     description="Filter by role name or role ID.",
+        # ),
+    ],
+    responses={200: EmployeeSerializer(many=True)},
+    summary="List Employees",
+    description="Retrieve employee records with support for filtering by active and deleted status.",
+)
 class EmployeeListView(generics.ListAPIView):
     serializer_class = EmployeeSerializer
     permission_classes = [permissions.IsAuthenticated]
 
-    @extend_schema(
-        parameters=[
-            OpenApiParameter(
-                name="is_active",
-                type=OpenApiTypes.BOOL,
-                location=OpenApiParameter.QUERY,
-                required=False,
-                description="Filter by active status ('true'/'false'/'all').",
-            ),
-            OpenApiParameter(
-                name="is_deleted",
-                type=OpenApiTypes.BOOL,
-                location=OpenApiParameter.QUERY,
-                required=False,
-                description="Filter by soft-deleted status ('true'/'false'/'all'). Defaults to 'false' if not specified.",
-            ),
-            OpenApiParameter(
-                name="status",
-                type=OpenApiTypes.STR,
-                location=OpenApiParameter.QUERY,
-                required=False,
-                description="Convenience filter for employee status: 'active', 'inactive', 'deleted', or 'all'.",
-            ),
-            OpenApiParameter(
-                name="role",
-                type=OpenApiTypes.STR,
-                location=OpenApiParameter.QUERY,
-                required=False,
-                description="Filter by role name or role ID.",
-            ),
-        ],
-        responses={200: EmployeeSerializer(many=True)},
-        summary="List Employees",
-        description="Retrieve employee records with support for filtering by active and deleted status.",
-    )
     def get_queryset(self):
         queryset = Employee.objects.all()
 
