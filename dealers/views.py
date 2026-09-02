@@ -14,7 +14,7 @@ class SubDealerListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        queryset = SubDealer.objects.filter(is_deleted=False)
+        queryset = SubDealer.objects.filter(is_deleted=False).select_related('employee')
         # Non-admins see only dealers they personally manage
         if not is_admin_of(user):
             queryset = queryset.filter(employee=user)

@@ -9,13 +9,18 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-cloudinary.config(
-    cloud_name=os.getenv('CLOUDINARY_CLOUD_NAME'),
-    api_key=os.getenv('CLOUDINARY_API_KEY'),
-    api_secret=os.getenv('CLOUDINARY_API_SECRET'),
-    api_proxy='http://proxy.server:3128',
-    secure=True
-)
+
+cloudinary_config = {
+    'cloud_name': os.getenv('CLOUDINARY_CLOUD_NAME'),
+    'api_key': os.getenv('CLOUDINARY_API_KEY'),
+    'api_secret': os.getenv('CLOUDINARY_API_SECRET'),
+    'secure': True,
+}
+api_proxy = os.getenv('CLOUDINARY_API_PROXY') or os.getenv('CLOUDINARY_PROXY')
+if api_proxy:
+    cloudinary_config['api_proxy'] = api_proxy
+
+cloudinary.config(**cloudinary_config)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 

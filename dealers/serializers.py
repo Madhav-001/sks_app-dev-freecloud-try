@@ -16,13 +16,27 @@ class SubDealerSerializer(serializers.ModelSerializer):
 
 
 class SubDealerListSerializer(serializers.ModelSerializer):
+    employee_name = serializers.SerializerMethodField()
+    employeeidnum = serializers.SerializerMethodField()
+
     class Meta:
         model = SubDealer
         fields = [
             'id', 'shop_name', 'phone', 'contact_person', 'contact_person_phone',
-            'shop_number', 'store_picture', 'employee', 'rank', 'created_at', 'updated_at'
+            'shop_number', 'street', 'district', 'store_picture', 'employee', 'employee_name', 'employeeidnum',
+            'rank', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_employee_name(self, obj):
+        if not obj.employee:
+            return None
+        return obj.employee.name if obj.employee.name else obj.employee.username
+
+    def get_employeeidnum(self, obj):
+        if not obj.employee:
+            return None
+        return obj.employee.employeeidnum
 
 
 
