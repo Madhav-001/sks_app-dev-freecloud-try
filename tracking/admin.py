@@ -76,15 +76,11 @@ class MilageAdmin(admin.ModelAdmin):
              If the role row doesn't exist → False (safe default).
         """
         user = request.user
-        if user.is_superuser or getattr(user, "role", None) == "OWNER":
+        if user.is_owner:
             return True
-
-        from users.models import EmployeeRole
-        try:
-            role_obj = EmployeeRole.objects.get(name=user.role)
-            return role_obj.milage_manage
-        except EmployeeRole.DoesNotExist:
-            return False
+        if user.role:
+            return bool(user.role.milage_manage)
+        return False
 
     # ------------------------------------------------------------------ #
     # Queryset scoping                                                     #

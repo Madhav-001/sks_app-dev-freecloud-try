@@ -100,6 +100,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
             "employee_id": str(att.employee.id),
             "employeeidnum": att.employee.employeeidnum,
             "employee_name": att.employee.name or att.employee.username,
+            "role": att.employee.role_name,
             "date": att.date.strftime("%Y-%m-%d") if att.date else None,
             "start_km": int(att.start_km) if att.start_km is not None else None,
             "start_image": request.build_absolute_uri(att.start_image.url) if att.start_image and att.start_image.name else None,
@@ -124,7 +125,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
     def list(self, request):
         """Admin-only: returns today's working employee attendance list."""
         today = timezone.now().date()
-        attendances = Attendance.objects.filter(date=today).select_related("employee")
+        attendances = Attendance.objects.filter(date=today).select_related("employee", "employee__role")
 
         results = [
             self._build_attendance_dict(att, request, id_value=att.employee.id)
@@ -210,7 +211,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
         attendances_qs = (
             Attendance.objects
             .filter(date=target_date)
-            .select_related("employee")
+            .select_related("employee", "employee__role")
             .order_by("employee__employeeidnum")
         )
 
@@ -224,6 +225,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
             Employee.objects
             .filter(is_active=True, is_deleted=False)
             .exclude(id__in=present_employee_ids)
+            .select_related("role")
             .order_by("employeeidnum")
         )
 
@@ -238,7 +240,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
                 "employee_id": str(emp.id),
                 "employeeidnum": emp.employeeidnum,
                 "employee_name": emp.name or emp.username,
-                "role": emp.role,
+                "role": emp.role_name,
                 "date": target_date.strftime("%Y-%m-%d"),
                 "status": "Absent",
             }
@@ -343,7 +345,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
 
         # --- Resolve employee ---
         try:
-            employee = Employee.objects.get(id=user_id)
+            employee = Employee.objects.select_related("role").get(id=user_id)
         except (Employee.DoesNotExist, ValueError):
             return response.Response(
                 {"error": "Employee not found."},
@@ -460,7 +462,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
                 "employee_id": str(employee.id),
                 "employeeidnum": employee.employeeidnum,
                 "employee_name": employee.name or employee.username,
-                "role": employee.role,
+                "role": employee.role_name,
                 "month": month,
                 "year": year,
                 "summary": {
@@ -520,10 +522,21 @@ class AttendanceViewSet(viewsets.GenericViewSet):
     @action(detail=False, methods=["post"], url_path="start", url_name="start")
     def start(self, request):
         """Handles employee attendance check-in."""
+        today = timezone.localdate()
+
+        # Check if user has an unclosed check-in from a previous day
+        past_unclosed = Attendance.objects.filter(
+            employee=request.user, date__lt=today, end_time__isnull=True, work_now=True
+        ).exists()
+        if past_unclosed:
+            return response.Response(
+                {"detail": "your not properly check-out previous working day. Please check-out first."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # POST request — block if user already has an active (unclosed) check-in today
         active = Attendance.objects.filter(
-            employee=request.user, date=timezone.now().date(), end_time__isnull=True
+            employee=request.user, date=today, end_time__isnull=True
         ).exists()
         if active:
             return response.Response(
@@ -535,7 +548,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
         serializer.is_valid(raise_exception=True)
         
         # Get values from request if provided, otherwise default to current date/time
-        date_val = serializer.validated_data.get("date") or timezone.now().date()
+        date_val = serializer.validated_data.get("date") or today
         time_val = serializer.validated_data.get("start_time") or timezone.now().time()
         
         serializer.save(
@@ -550,12 +563,12 @@ class AttendanceViewSet(viewsets.GenericViewSet):
     @action(detail=False, methods=["post"], url_path="end", url_name="end")
     def end(self, request):
         """Handles employee attendance check-out."""
+        today = timezone.localdate()
 
         # POST request
         date_str = request.data.get("date")
         if date_str:
             try:
-                from datetime import datetime
                 date_val = datetime.strptime(date_str, "%Y-%m-%d").date()
             except ValueError:
                 return response.Response(
@@ -563,7 +576,11 @@ class AttendanceViewSet(viewsets.GenericViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
         else:
-            date_val = timezone.now().date()
+            # If no date is specified, find the most recent unclosed attendance or default to today
+            unclosed = Attendance.objects.filter(
+                employee=request.user, end_time__isnull=True, work_now=True
+            ).order_by("-date", "-start_time").first()
+            date_val = unclosed.date if unclosed else today
 
         try:
             attendance = Attendance.objects.filter(
@@ -579,17 +596,33 @@ class AttendanceViewSet(viewsets.GenericViewSet):
         serializer.is_valid(raise_exception=True)
 
         end_km = serializer.validated_data["end_km"]
-        time_val = serializer.validated_data.get("end_time") or timezone.now().time()
 
-        # Calculate working time duration
-        start_dt = timezone.datetime.combine(attendance.date, attendance.start_time)
-        end_dt = timezone.datetime.combine(date_val, time_val)
-        
-        if timezone.is_aware(timezone.now()):
-            start_dt = timezone.make_aware(start_dt)
-            end_dt = timezone.make_aware(end_dt)
+        # If checking out a previous working day (date < today), force auto_checkout=True and end_time=23:59:59
+        is_past_day = attendance.date < today
 
-        duration = end_dt - start_dt
+        if is_past_day:
+            import datetime as dt_mod
+            time_val = dt_mod.time(23, 59, 59)
+            auto_checkout_val = True
+
+            start_dt = timezone.datetime.combine(attendance.date, attendance.start_time or dt_mod.time(0, 0, 0))
+            end_dt = timezone.datetime.combine(attendance.date, time_val)
+            if timezone.is_aware(timezone.now()):
+                start_dt = timezone.make_aware(start_dt)
+                end_dt = timezone.make_aware(end_dt)
+            duration = end_dt - start_dt
+        else:
+            time_val = serializer.validated_data.get("end_time") or timezone.now().time()
+            auto_checkout_val = False
+
+            # Calculate working time duration
+            start_dt = timezone.datetime.combine(attendance.date, attendance.start_time or timezone.now().time())
+            end_dt = timezone.datetime.combine(date_val, time_val)
+            if timezone.is_aware(timezone.now()):
+                start_dt = timezone.make_aware(start_dt)
+                end_dt = timezone.make_aware(end_dt)
+            duration = end_dt - start_dt
+
         total_seconds = max(0, int(duration.total_seconds()))
 
         # "if more then 30s consider as a 1 minute"
@@ -600,7 +633,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
         total_time_str = f"{hours:02d}:{minutes:02d}"
 
         # Total km calculation
-        total_km = int(end_km - attendance.start_km)
+        total_km = max(0, int(end_km - attendance.start_km))
 
         # Save to DB
         attendance = serializer.save(
@@ -608,6 +641,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
             total_km=float(total_km),
             total_time=duration,
             work_now=False,
+            auto_checkout=auto_checkout_val,
         )
 
         # ------------------------------------------------------------------
@@ -646,7 +680,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
         # Update Milage record with return_to_home + add to cumulative total
         milage_record, _ = Milage.objects.get_or_create(
             employee=request.user,
-            date=date_val,
+            date=attendance.date,
             defaults={
                 "attendance_id": attendance,
                 "total_distance_travelled": 0.0,
@@ -670,54 +704,115 @@ class AttendanceViewSet(viewsets.GenericViewSet):
 
     @action(detail=False, methods=["get"], url_path="status", url_name="status")
     def attendance_status(self, request):
-        """Returns today's attendance status for the authenticated employee."""
+        """Returns today's attendance status or prompts for previous unclosed check-out."""
         today = timezone.localdate()
         today_str = today.strftime("%Y-%m-%d")
 
-        try:
-            attendance = Attendance.objects.filter(
-                employee=request.user, date=today
-            ).latest("start_time")
-        except Attendance.DoesNotExist:
-            # Return last check-out details. Also, indicate not check-in today like this "today(DD:MM:YYYY) not check-in yet".
-            last_checkout = Attendance.objects.filter(
-                employee=request.user, work_now=False
-            ).order_by("-date", "-end_time").first()
+        # Check for any active (unclosed) attendance
+        unclosed_attendance = (
+            Attendance.objects.filter(employee=request.user, work_now=True, end_time__isnull=True)
+            .order_by("-date", "-start_time")
+            .first()
+        )
 
-            res_data = {
-                "date": today_str,
-                "status": "Not check-in yet",
-                "last_attendance": {
-                    "date": last_checkout.date.strftime("%Y-%m-%d") if last_checkout.date else None,
-                    "start_time": last_checkout.start_time.strftime("%H:%M:%S") if last_checkout.start_time else None,
-                    "end_time": last_checkout.end_time.strftime("%H:%M:%S") if last_checkout.end_time else None,
-                    "auto_checkout": last_checkout.auto_checkout,
-                }
-            }
-            return response.Response(res_data, status=status.HTTP_200_OK)
+        if unclosed_attendance:
+            # Case 1: Unclosed attendance from a previous working day (date < today)
+            if unclosed_attendance.date < today:
+                return response.Response(
+                    {
+                        "date": unclosed_attendance.date.strftime("%Y-%m-%d"),
+                        "status": "Check-in",
+                        "start_time": (
+                            unclosed_attendance.start_time.strftime("%H:%M:%S")
+                            if unclosed_attendance.start_time
+                            else None
+                        ),
+                        "detail": "your not properly check-out previous working day",
+                    },
+                    status=status.HTTP_200_OK,
+                )
 
-        if attendance.end_time is None:
-            # Checked in but not checked out
+            # Case 2: Unclosed attendance from today
             return response.Response(
                 {
                     "date": today_str,
                     "status": "Check-in",
-                    "start_time": attendance.start_time.strftime("%H:%M:%S") if attendance.start_time else None
+                    "start_time": (
+                        unclosed_attendance.start_time.strftime("%H:%M:%S")
+                        if unclosed_attendance.start_time
+                        else None
+                    ),
                 },
                 status=status.HTTP_200_OK,
             )
 
-        return response.Response(
-            {
-                "date": today_str,
-                "status": "Check-out",
-                "start_time": attendance.start_time.strftime("%H:%M:%S") if attendance.start_time else None,
-                "end_time": attendance.end_time.strftime("%H:%M:%S"),
-                "total_time": str(attendance.total_time),
-                "auto_checkout": attendance.auto_checkout,
-            },
-            status=status.HTTP_200_OK,
+        # Case 3: No unclosed attendance. Check if user already checked out today
+        today_attendance = (
+            Attendance.objects.filter(employee=request.user, date=today)
+            .order_by("-start_time")
+            .first()
         )
+
+        if today_attendance and today_attendance.end_time is not None:
+            total_time_str = "None"
+            if today_attendance.total_time is not None:
+                total_seconds = int(today_attendance.total_time.total_seconds())
+                h, rem = divmod(total_seconds, 3600)
+                m, s = divmod(rem, 60)
+                total_time_str = f"{h:02d}:{m:02d}:{s:02d}"
+
+            return response.Response(
+                {
+                    "date": today_str,
+                    "status": "Check-out",
+                    "start_time": (
+                        today_attendance.start_time.strftime("%H:%M:%S")
+                        if today_attendance.start_time
+                        else None
+                    ),
+                    "end_time": (
+                        today_attendance.end_time.strftime("%H:%M:%S")
+                        if today_attendance.end_time
+                        else None
+                    ),
+                    "total_time": total_time_str,
+                    "auto_checkout": today_attendance.auto_checkout,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # Case 4: No attendance today (Before Check-in)
+        last_checkout = (
+            Attendance.objects.filter(employee=request.user, work_now=False)
+            .order_by("-date", "-end_time")
+            .first()
+        )
+
+        res_data = {
+            "date": today_str,
+            "status": "Not check-in yet",
+            "last_attendance": {
+                "date": (
+                    last_checkout.date.strftime("%Y-%m-%d")
+                    if last_checkout and last_checkout.date
+                    else None
+                ),
+                "start_time": (
+                    last_checkout.start_time.strftime("%H:%M:%S")
+                    if last_checkout and last_checkout.start_time
+                    else None
+                ),
+                "end_time": (
+                    last_checkout.end_time.strftime("%H:%M:%S")
+                    if last_checkout and last_checkout.end_time
+                    else None
+                ),
+                "auto_checkout": (
+                    last_checkout.auto_checkout if last_checkout else False
+                ),
+            },
+        }
+        return response.Response(res_data, status=status.HTTP_200_OK)
 
     @extend_schema(
         summary="Employee attendance history",
@@ -1705,7 +1800,7 @@ class AdminEmployeeMilageSummaryView(viewsets.GenericViewSet):
 
         # ── Resolve employee ───────────────────────────────────────────────
         try:
-            employee = Employee.objects.get(id=user_id)
+            employee = Employee.objects.select_related("role").get(id=user_id)
         except (Employee.DoesNotExist, ValueError):
             return response.Response(
                 {"error": "Employee not found."},
@@ -1759,7 +1854,7 @@ class AdminEmployeeMilageSummaryView(viewsets.GenericViewSet):
             {
                 "employee_id":   str(employee.id),
                 "employee_name": employee.name if getattr(employee, "name", None) else employee.username,
-                "employee_role": employee.role,
+                "employee_role": employee.role_name,
                 "week_start":    oldest_in_page.strftime("%Y-%m-%d") if oldest_in_page else None,
                 "week_end":      newest_in_page.strftime("%Y-%m-%d") if newest_in_page else None,
                 "count":         len(page_records),

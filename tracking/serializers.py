@@ -204,7 +204,7 @@ class AdminDailyMilageSerializer(serializers.ModelSerializer):
     """
     employee_id   = serializers.UUIDField(source='employee.id', read_only=True)
     employee_name = serializers.SerializerMethodField()
-    employee_role = serializers.CharField(source='employee.role', read_only=True)
+    employee_role = serializers.CharField(source='employee.role_name', read_only=True)
     date          = serializers.DateField(format='%Y-%m-%d')
 
     # GPS-route cumulative totals (from the Milage table)
