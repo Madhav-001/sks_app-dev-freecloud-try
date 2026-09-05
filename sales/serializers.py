@@ -1,4 +1,8 @@
+from decimal import Decimal
+
+from django.db.models import Count, Sum, Case, When, F, Value, DecimalField
 from rest_framework import serializers
+
 from .models import Product, Order, OrderItem, Collection, MonthlyTarget, SpecialTarget
 from dealers.serializers import SubDealerSerializer
 from users.serializers import EmployeeSerializer
@@ -8,6 +12,160 @@ from users.permissions import (
     has_collection_manage_permission,
     has_visit_manage_permission,
 )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+# Order statuses that count as "processed" (i.e. the sale went through).
+_PROCESSED_ORDER_STATUSES = ["approve", "in_transit", "delivered"]
+
+
+def _format_cr_amount(cr_amount: Decimal) -> str:
+    """
+    Format decimal Cr value for API JSON string output.
+    Keeps 2 decimal places for standard Cr/Lakh amounts (e.g. '0.30', '1.50'),
+    or up to 4 decimal places for Thousand amounts (e.g. '0.007').
+    """
+    if cr_amount is None:
+        return "0.00"
+    cr_amount = Decimal(str(cr_amount))
+    if cr_amount == 0:
+        return "0.00"
+    q2 = cr_amount.quantize(Decimal("0.01"))
+    if q2 == cr_amount:
+        return str(q2)
+    s = f"{cr_amount:.4f}".rstrip("0").rstrip(".")
+    if "." in s:
+        decimals = len(s.split(".")[1])
+        if decimals < 2:
+            return f"{cr_amount:.2f}"
+    return s
+
+
+def _format_cr_display(cr_amount: Decimal) -> str:
+    """
+    Format decimal Cr value into short Cr display string.
+    Examples:
+      1.50  → "1.5Cr"
+      2.00  → "2Cr"
+      0.30  → "0.3Cr"
+      0.007 → "0.007Cr"
+      0.00  → "0Cr"
+    """
+    if cr_amount is None:
+        return "0Cr"
+    cr_amount = Decimal(str(cr_amount))
+    if cr_amount == 0:
+        return "0Cr"
+    s = f"{cr_amount:.4f}".rstrip("0").rstrip(".")
+    if not s or s == "0":
+        return "0Cr"
+    return f"{s}Cr"
+
+
+def _format_indian_amount(amount: Decimal) -> str:
+    """
+    Format a decimal amount into the Indian short-scale notation.
+
+    Examples:
+      1_057_893  → "10.58L"
+      25_000_000 → "2.5Cr"
+      9_500      → "9500"   (below 1 Lakh, returned as plain integer string)
+    """
+    amount = Decimal(str(amount))
+    crore = Decimal("10000000")   # 1 Cr  = 10,000,000
+    lakh  = Decimal("100000")     # 1 L   = 1,00,000
+
+    if amount >= crore:
+        value = (amount / crore).quantize(Decimal("0.01")).normalize()
+        return f"{value}Cr"
+    elif amount >= lakh:
+        value = (amount / lakh).quantize(Decimal("0.01")).normalize()
+        return f"{value}L"
+    else:
+        return str(int(amount))
+
+
+def _format_target_dict(target_obj) -> dict:
+    """Format sales_target, collection_target, visits_target into standard dict."""
+    if not target_obj:
+        return None
+    coll = Decimal(str(target_obj.collection_target))
+    return {
+        "sales_tons": round(float(target_obj.sales_target), 3),
+        "collection_amount": _format_cr_amount(coll),
+        "collection_amount_display": _format_cr_display(coll),
+        "visits_count": target_obj.visits_target,
+    }
+
+
+def _build_achieved(employee_id, orders_qs, collections_qs, visits_qs) -> dict:
+    """
+    Compute the three achievement metrics given pre-filtered querysets.
+
+    Parameters
+    ----------
+    employee_id   : PK of the employee (used to filter each queryset)
+    orders_qs     : base Orders queryset already filtered to the right period
+    collections_qs: base Collections queryset already filtered to the right period
+    visits_qs     : base Visits queryset already filtered to the right period
+
+    Returns a dict with keys: sales_tons, collection_amount, collection_count,
+    collection_amount_display, visits_count.
+    """
+    # ── Sales weight in tons ────────────────────────────────────────────────
+    processed_orders = orders_qs.filter(
+        employee_id=employee_id,
+        status__in=_PROCESSED_ORDER_STATUSES,
+    ).values_list("id", flat=True)
+
+    total_qty = (
+        OrderItem.objects
+        .filter(order_id__in=processed_orders)
+        .aggregate(total=Sum("quantity"))["total"]
+        or 0
+    )
+    # quantity unit = 1 kg  →  tons = qty / 1000
+    sales_tons = round(total_qty / 1000, 3)
+
+    # ── Approved collections in Cr ──────────────────────────────────────────
+    # Convert amounts based on reference_id ('C'=Crore, 'L'=Lakh, 'T'=Thousand)
+    # Result stored directly in Cr:
+    #   'C' -> amount * 1.0 (already in Cr)
+    #   'L' -> amount * 0.01 (1 Lakh = 0.01 Cr)
+    #   'T' -> amount * 0.0001 (1 Thousand = 0.0001 Cr)
+    #   other/null -> amount / 10,000,000 (if raw rupees)
+    coll_agg = (
+        collections_qs
+        .filter(employee_id=employee_id, status="success")
+        .aggregate(
+            total_cr=Sum(
+                Case(
+                    When(reference_id="C", then=F("amount") * Value(Decimal("1.000000"))),
+                    When(reference_id="L", then=F("amount") * Value(Decimal("0.010000"))),
+                    When(reference_id="T", then=F("amount") * Value(Decimal("0.000100"))),
+                    default=F("amount") / Value(Decimal("10000000.0")),
+                    output_field=DecimalField(max_digits=14, decimal_places=6),
+                )
+            ),
+            count=Count("id"),
+        )
+    )
+    coll_cr = coll_agg["total_cr"] or Decimal("0.00")
+    coll_count = coll_agg["count"] or 0
+
+    # ── Visits ──────────────────────────────────────────────────────────────
+    visits_count = visits_qs.filter(employee_id=employee_id).count()
+
+    return {
+        "sales_tons": round(sales_tons, 3),
+        "collection_amount": _format_cr_amount(coll_cr),
+        "collection_amount_display": _format_cr_display(coll_cr),
+        "collection_count": coll_count,
+        "visits_count": visits_count,
+    }
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -266,15 +424,19 @@ class OrderCreateSerializer(serializers.ModelSerializer):
 
 class SimpleEmployeeSummarySerializer(serializers.ModelSerializer):
     """Compact employee representation for target responses."""
+    role = serializers.CharField(source="role.name", read_only=True, default=None)
+
     class Meta:
         model = Employee
-        fields = ["id", "employeeidnum", "name", "username", "phone"]
+        fields = ["id", "employeeidnum", "name", "username", "phone", "role"]
 
 
 class MonthlyTargetSerializer(serializers.ModelSerializer):
     """Serializer used for reading MonthlyTarget (both admin and employee GET)."""
     employee_details = SimpleEmployeeSummarySerializer(source="employee", read_only=True)
     target_setby_details = SimpleEmployeeSummarySerializer(source="target_setby", read_only=True)
+    target = serializers.SerializerMethodField()
+    achieved = serializers.SerializerMethodField()
 
     class Meta:
         model = MonthlyTarget
@@ -284,9 +446,8 @@ class MonthlyTargetSerializer(serializers.ModelSerializer):
             "employee_details",
             "year",
             "month",
-            "sales_target",
-            "collection_target",
-            "visits_target",
+            "target",
+            "achieved",
             "target_setby",
             "target_setby_details",
             "created_at",
@@ -298,6 +459,44 @@ class MonthlyTargetSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+    def get_target(self, obj):
+        """
+        Return the set targets in the same shape as `achieved` for easy comparison.
+
+        sales_tons          : target in tons (3 decimal places, e.g. 1.250)
+        collection_amount   : raw decimal amount string
+        collection_amount_display: Indian short-scale (e.g. 10.58L, 2.5Cr)
+        visits_count        : target visit count
+        """
+        coll = Decimal(str(obj.collection_target))
+        return {
+            "sales_tons": round(float(obj.sales_target), 3),
+            "collection_amount": _format_cr_amount(coll),
+            "collection_amount_display": _format_cr_display(coll),
+            "visits_count": obj.visits_target,
+        }
+
+    def get_achieved(self, obj):
+        """
+        Return the current achievement stats for this employee in this month/year.
+
+        sales_tons          : total kg sold (non-pending/rejected orders) ÷ 1000 → tons
+        collection_amount   : sum of approved (status='success') collections
+        collection_count    : number of approved collection records
+        visits_count        : total visits logged this calendar month
+        """
+        from tracking.models import Visit
+
+        orders_qs      = Order.objects.filter(created_at__year=obj.year, created_at__month=obj.month)
+        collections_qs = Collection.objects.filter(created_at__year=obj.year, created_at__month=obj.month)
+        visits_qs      = Visit.objects.filter(created_at__year=obj.year, created_at__month=obj.month)
+
+        emp_id = obj.employee_id
+        if emp_id is None and self.context.get("request") and hasattr(self.context["request"], "user"):
+            emp_id = getattr(self.context["request"].user, "id", None)
+
+        return _build_achieved(emp_id, orders_qs, collections_qs, visits_qs)
 
 
 class AdminMonthlyTargetWriteSerializer(serializers.ModelSerializer):
@@ -348,15 +547,28 @@ class AdminMonthlyTargetWriteSerializer(serializers.ModelSerializer):
                     {"visits_target": "You do not have permission ('visit_manage') to set or update visits targets."}
                 )
 
-        # Unique constraint check on create
+        # Duplicate PK check on create only
         if not self.instance:
-            employee = attrs.get("employee")
-            year = attrs.get("year")
-            month = attrs.get("month")
-            if employee and year and month:
-                if MonthlyTarget.objects.filter(employee=employee, year=year, month=month).exists():
+            employee = attrs.get("employee")   # may be None for common target
+            year     = attrs.get("year")
+            month    = attrs.get("month")
+            if year and month:
+                # Build the PK the same way the model's save() will
+                if employee is None:
+                    target_id = f"{int(year):04d}-{int(month):02d}"
+                    label     = "common"
+                    scope     = f"{month}/{year}"
+                else:
+                    target_id = f"{int(year):04d}-{int(month):02d}-{employee.employeeidnum}"
+                    label     = "individual"
+                    scope     = f"employee '{employee.username}' for {month}/{year}"
+
+                if MonthlyTarget.objects.filter(id=target_id).exists():
                     raise serializers.ValidationError(
-                        {"non_field_errors": [f"Monthly target already exists for employee '{employee.username}' for {month}/{year}."]}
+                        {"non_field_errors": [
+                            f"A {label} monthly target already exists for {scope}. "
+                            "Use PATCH to update the existing target."
+                        ]}
                     )
 
         return attrs
@@ -366,6 +578,8 @@ class SpecialTargetSerializer(serializers.ModelSerializer):
     """Serializer used for reading SpecialTarget (both admin and employee GET)."""
     employee_details = SimpleEmployeeSummarySerializer(source="employee", read_only=True)
     target_setby_details = SimpleEmployeeSummarySerializer(source="target_setby", read_only=True)
+    target = serializers.SerializerMethodField()
+    achieved = serializers.SerializerMethodField()
 
     class Meta:
         model = SpecialTarget
@@ -376,9 +590,8 @@ class SpecialTargetSerializer(serializers.ModelSerializer):
             "title",
             "from_date",
             "to_date",
-            "sales_target",
-            "collection_target",
-            "visits_target",
+            "target",
+            "achieved",
             "target_setby",
             "target_setby_details",
             "created_at",
@@ -390,6 +603,54 @@ class SpecialTargetSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+    def get_target(self, obj):
+        """
+        Return the set targets in the same shape as `achieved` for easy comparison.
+
+        sales_tons          : target in tons (3 decimal places, e.g. 1.250)
+        collection_amount   : raw decimal amount string
+        collection_amount_display: Indian short-scale (e.g. 10.58L, 2.5Cr)
+        visits_count        : target visit count
+        """
+        coll = Decimal(str(obj.collection_target))
+        return {
+            "sales_tons": round(float(obj.sales_target), 3),
+            "collection_amount": _format_cr_amount(coll),
+            "collection_amount_display": _format_cr_display(coll),
+            "visits_count": obj.visits_target,
+        }
+
+    def get_achieved(self, obj):
+        """
+        Return the current achievement stats for this employee for the special
+        event's date window (from_date … to_date, inclusive).
+
+        sales_tons          : total kg sold (non-pending/rejected orders) ÷ 1000 → tons
+        collection_amount   : sum of approved (status='success') collections
+        collection_count    : number of approved collection records
+        visits_count        : total visits logged within the event window
+        """
+        from tracking.models import Visit
+
+        orders_qs = Order.objects.filter(
+            created_at__date__gte=obj.from_date,
+            created_at__date__lte=obj.to_date,
+        )
+        collections_qs = Collection.objects.filter(
+            created_at__date__gte=obj.from_date,
+            created_at__date__lte=obj.to_date,
+        )
+        visits_qs = Visit.objects.filter(
+            created_at__date__gte=obj.from_date,
+            created_at__date__lte=obj.to_date,
+        )
+
+        emp_id = obj.employee_id
+        if emp_id is None and self.context.get("request") and hasattr(self.context["request"], "user"):
+            emp_id = getattr(self.context["request"].user, "id", None)
+
+        return _build_achieved(emp_id, orders_qs, collections_qs, visits_qs)
 
 
 class AdminSpecialTargetWriteSerializer(serializers.ModelSerializer):
@@ -450,4 +711,55 @@ class AdminSpecialTargetWriteSerializer(serializers.ModelSerializer):
             )
 
         return attrs
+
+
+class TargetMetricSerializer(serializers.Serializer):
+    sales_tons = serializers.FloatField(help_text="Target sales in tons (e.g. 1.25)")
+    collection_amount = serializers.CharField(help_text="Target collection amount in Cr e.g. '1.50'")
+    collection_amount_display = serializers.CharField(help_text="Formatted Cr notation e.g. '1.5Cr'")
+    visits_count = serializers.IntegerField(help_text="Target visits count")
+
+
+class TargetAchievedSerializer(serializers.Serializer):
+    sales_tons = serializers.FloatField(help_text="Achieved sales in tons")
+    collection_amount = serializers.CharField(help_text="Achieved approved collection amount in Cr e.g. '0.30'")
+    collection_amount_display = serializers.CharField(help_text="Formatted Cr notation e.g. '0.3Cr'")
+    collection_count = serializers.IntegerField(help_text="Number of approved collections")
+    visits_count = serializers.IntegerField(help_text="Number of visits logged")
+
+
+class EmployeeMonthlyTargetNestedSerializer(serializers.Serializer):
+    employee = SimpleEmployeeSummarySerializer()
+    target_type = serializers.ChoiceField(choices=["individual", "common", "none"])
+    target_id = serializers.CharField(allow_null=True)
+    is_custom = serializers.BooleanField()
+    target = TargetMetricSerializer(allow_null=True)
+    achieved = TargetAchievedSerializer()
+    target_setby = serializers.UUIDField(allow_null=True)
+    target_setby_details = SimpleEmployeeSummarySerializer(allow_null=True)
+    created_at = serializers.DateTimeField(allow_null=True)
+    updated_at = serializers.DateTimeField(allow_null=True)
+
+
+class CommonTargetSummarySerializer(serializers.Serializer):
+    id = serializers.CharField()
+    sales_target = serializers.FloatField()
+    collection_target = serializers.CharField()
+    visits_target = serializers.IntegerField()
+    target = TargetMetricSerializer()
+    target_setby = serializers.UUIDField(allow_null=True)
+    target_setby_details = SimpleEmployeeSummarySerializer(allow_null=True)
+    created_at = serializers.DateTimeField()
+    updated_at = serializers.DateTimeField()
+
+
+class MonthTargetNestedListSerializer(serializers.Serializer):
+    id = serializers.CharField(help_text="Month ID e.g. '2026-09'")
+    year = serializers.IntegerField()
+    month = serializers.IntegerField()
+    common_target = CommonTargetSummarySerializer(allow_null=True)
+    total_employees = serializers.IntegerField()
+    individual_targets_count = serializers.IntegerField()
+    common_targets_count = serializers.IntegerField()
+    employees = EmployeeMonthlyTargetNestedSerializer(many=True)
 

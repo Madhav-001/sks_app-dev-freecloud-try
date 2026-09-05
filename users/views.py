@@ -130,6 +130,18 @@ class EmployeeListView(generics.ListAPIView):
     def get_queryset(self):
         queryset = Employee.objects.all()
 
+        # ── Hierarchy scoping ──────────────────────────────────────────────
+        # Owner / superuser sees everyone.
+        # Any other role sees ONLY employees whose hierarchy_level is
+        # greater than or equal to the requester's own level
+        # (i.e. same level + all levels below — never superiors).
+        requester = self.request.user
+        if not requester.is_owner:
+            queryset = queryset.filter(
+                role__hierarchy_level__gte=requester.hierarchy_level
+            )
+        # ──────────────────────────────────────────────────────────────────
+
         status_param = self.request.query_params.get('status', '').strip().lower()
         is_active_param = self.request.query_params.get('is_active', '').strip().lower()
         is_deleted_param = self.request.query_params.get('is_deleted', '').strip().lower()
@@ -184,11 +196,21 @@ class EmployeeDetailView(generics.RetrieveUpdateDestroyAPIView):
     def get_object(self):
         """
         Retrieves the target employee and enforces hierarchy:
-        - Admins (level <= 5) may view any employee record (GET).
-        - For PATCH / DELETE the requester must outrank the target.
+        - Owner / superuser may view any employee record.
+        - Any other requester may only view employees at the same level or lower
+          (hierarchy_level >= requester.hierarchy_level).
+        - For PATCH / DELETE the requester must strictly outrank the target.
         """
         obj = super().get_object()
         requester = self.request.user
+
+        if not requester.is_owner:
+            # Block GET (view) of any employee who outranks the requester
+            if obj.hierarchy_level < requester.hierarchy_level:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied(
+                    "You do not have permission to view this employee's record."
+                )
 
         # Mutating methods require hierarchy authority over the target
         if self.request.method in ('PATCH', 'DELETE'):

@@ -11,7 +11,7 @@ urlpatterns = [
     # ── Attendance ──────────────────────────────────────────────────────────
 
     # Today's working employees (basic list)
-    path('attendance/', AttendanceViewSet.as_view({'get': 'list'}), name='admin-attendance-list'),
+    # path('attendance/', AttendanceViewSet.as_view({'get': 'list'}), name='admin-attendance-list'),
 
     # All-category attendance for a given date with cursor pagination
     # GET /api/admin/tracking/attendance/date/?date=YYYY-MM-DD&cursor=<token>&page_size=<n>

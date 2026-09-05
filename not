@@ -1,0 +1,65 @@
+
+
+
+
+
+
+corrently the "GET /api/admin/sales/monthly-targets/" API list of Monthly Target for perticuler employee in perticuler month with month name like jan, feb etc. and instead of month name it should be month number (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
+
+
+
+
+
+
+
+in this["GET /api/admin/sales/monthly-targets/"] API not show that Input Fields in swagger ui. correct that
+
+
+in this "GET /api/admin/sales/monthly-targets/" API, add that monthly corrently achievde Target(corrently completed Sales(totally order in processed on that Month[calculat based on product weight and only show in Ton weights(example: 1 ton 250kg = 1.250 ton)]. and not considered pending, and rejected orders), corrently collected Collections(collection count[only approved collections only. and show that in the largest values and less count[example: 1057893 = 10.58L, 25000000 = 2.5Cr]]), corrently complete visits count) for that perticular employee data's included in this response.
+and also same kind of response need in "GET /api/admin/sales/special-targets/" api too, but it takes data's only for the perticular employee and between that special event duration for calculation
+
+
+
+
+in here 'sales' target not based on order amounts, It's only based on "how much ton order they seled?" (totaly based on product ton weight[ton, kg] kind of weights is the monthly sales target) so, in target value always show in ton weights (example: 1 ton 250kg = 1.250 ton).
+and collection was the only amount based calculation so, keep it that. and visits target is a count only.
+and "Monthly Target" & "Special Target" is have same format of response
+
+
+
+
+
+
+change "POST /api/admin/sales/monthly-targets/" api for single and multiple target data uploading at the same time.
+
+
+
+
+
+in the "GET /api/auth/list/" api only provide equivalent level and lower level employee records. but, it's not provided in the superior level employees data. and also restrict other access for the superior level employees data from lower level employees data's. 
+
+
+
+in target field ID is now "YYYY-MM" format this for common target for all employees. but, indugval employee target id shoud be diffrent for each emplyees like this "YYYY-MM-employeeidnum". and if that employee have specific mounth target that month he not followed the common target for that month (only for that perticular employee). other vice he follow common targets. so, change that employee target id and target field value empty(or)null.
+same like this applay in special target too.
+
+
+
+based on new changes, change output of "GET /api/admin/sales/monthly-targets/" api response and show it in all employees datas in nested format. then explain what you done?.  
+and this[D:\Mady\program\git\Anbu_anna\admin-web\sks-admin-only] my front-end admin page code. give me propmet for change in frontend for connect this updated backend api. 
+
+
+
+
+in achived data return that same number employee given. but, actuval need calculated value based on that "Reference id:[models.py#L192-194](textBlock;file:///d%3A/Mady/program/git/Anbu_anna/SKS_BE/sks_app-dev-freecloud%20try/sales/models.py#L192-194) ['T' for 1000's, 'L' for Lacks, 'C' for Corse]" use that data for find exact number need to use in calculation. But, sales and visits is good, keep that. only change collection values calculations and result's in cr. and dont change api IO fields only change values(proper calculations)
+
+
+
+
+
+
+
+
+
+
+

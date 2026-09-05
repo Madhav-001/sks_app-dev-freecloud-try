@@ -1640,7 +1640,7 @@ class MilageViewSet(viewsets.GenericViewSet):
 
 class AdminDailyMilageView(viewsets.GenericViewSet):
     """
-    GET /api/admin/tracking/milage/<date>/
+    GET /api/admin/tracking/milage/YYY:MM:DD/
 
     Returns a list of every employee who has a mileage record for the given
     calendar day, including the odometer-based total_km from their Attendance
@@ -1664,6 +1664,7 @@ class AdminDailyMilageView(viewsets.GenericViewSet):
     @extend_schema(
         summary="Admin: all-employee daily mileage report",
         description=(
+            "date Input format is YYYY-MM-DD. "
             "Returns the mileage summary for **every employee** who has a "
             "Mileage record on the specified date.\n\n"
             "Each entry includes:\n"

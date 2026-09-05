@@ -2,7 +2,7 @@ from datetime import datetime
 
 from django.db import transaction
 from django.utils import timezone
-from drf_spectacular.utils import extend_schema, OpenApiParameter
+from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 from rest_framework import viewsets, status
 from rest_framework.views import APIView
@@ -19,7 +19,10 @@ from users.permissions import (
     IsOwnerOrCollectionManage,
     IsTargetAdmin,
 )
-from .models import Product, Order, Collection, MonthlyTarget, SpecialTarget
+from decimal import Decimal
+from django.db.models import Sum, Count, Case, When, F, Value, DecimalField
+from users.models import Employee
+from .models import Product, Order, OrderItem, Collection, MonthlyTarget, SpecialTarget
 from .serializers import (
     ProductSerializer,
     CollectionSerializer,
@@ -32,6 +35,13 @@ from .serializers import (
     AdminMonthlyTargetWriteSerializer,
     SpecialTargetSerializer,
     AdminSpecialTargetWriteSerializer,
+    SimpleEmployeeSummarySerializer,
+    MonthTargetNestedListSerializer,
+    _format_target_dict,
+    _format_cr_amount,
+    _format_cr_display,
+    _format_indian_amount,
+    _PROCESSED_ORDER_STATUSES,
 )
 
 
@@ -686,12 +696,54 @@ class AdminCollectionApproveView(APIView):
 # Sales Targets ViewSets (Admin & Employee)
 # ---------------------------------------------------------------------------
 
+@extend_schema_view(
+    list=extend_schema(
+        summary="List Monthly Targets (Nested by Month & Employee)",
+        description=(
+            "Returns monthly targets grouped by month in nested format showing "
+            "the common baseline target and all eligible employees with their effective target "
+            "(individual override or common fallback) and current achieved stats."
+        ),
+        parameters=[
+            OpenApiParameter(
+                name="employee_id",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description="Filter nested employees by employee ID (UUID or employeeidnum).",
+                required=False,
+            ),
+            OpenApiParameter(
+                name="year",
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description="Filter by year (e.g. 2026).",
+                required=False,
+            ),
+            OpenApiParameter(
+                name="month",
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description="Filter by month (1–12).",
+                required=False,
+            ),
+        ],
+        responses={200: MonthTargetNestedListSerializer(many=True)},
+    ),
+    retrieve=extend_schema(
+        summary="Retrieve Monthly Target / Month Summary",
+        description="Retrieve a single target by ID, or if ID is 'YYYY-MM', retrieve the full month nested summary.",
+    ),
+    create=extend_schema(
+        summary="Create Monthly Target(s)",
+        description="Create a single monthly target or a list of monthly targets. Set employee=null for common target.",
+    ),
+)
 class AdminMonthlyTargetViewSet(viewsets.ModelViewSet):
     """
     Admin endpoint for Monthly Targets.
-    GET /api/admin/sales/monthly-targets/ (list with optional ?employee_id=, ?year=, ?month=)
-    POST /api/admin/sales/monthly-targets/ (create monthly target)
-    GET /api/admin/sales/monthly-targets/{id}/ (retrieve detail)
+    GET /api/admin/sales/monthly-targets/ (list nested format by month with all employees)
+    POST /api/admin/sales/monthly-targets/ (create single or multiple monthly targets)
+    GET /api/admin/sales/monthly-targets/{id}/ (retrieve detail or month nested summary)
     PATCH /api/admin/sales/monthly-targets/{id}/ (partial update)
 
     Restricted to Owner or users with at least one of:
@@ -701,30 +753,246 @@ class AdminMonthlyTargetViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, MustChangePasswordPermission, IsTargetAdmin]
     queryset = MonthlyTarget.objects.select_related("employee", "target_setby").all()
 
-    def get_queryset(self):
-        qs = super().get_queryset()
-        employee_id = self.request.query_params.get("employee_id")
-        year = self.request.query_params.get("year")
-        month = self.request.query_params.get("month")
-
-        if employee_id:
-            qs = qs.filter(employee_id=employee_id)
-        if year:
-            qs = qs.filter(year=year)
-        if month:
-            qs = qs.filter(month=month)
-        return qs
-
     def get_serializer_class(self):
         if self.action in ['create', 'partial_update', 'update']:
             return AdminMonthlyTargetWriteSerializer
         return MonthlyTargetSerializer
 
+    def _get_eligible_employees(self, request, employee_id_param=None):
+        requester = request.user
+        qs = (
+            Employee.objects
+            .filter(is_active=True, is_deleted=False, role__name="SALESMAN")
+            .exclude(is_superuser=True)
+            .select_related("role")
+        )
+        if not requester.is_owner:
+            qs = qs.filter(role__hierarchy_level__gte=requester.hierarchy_level)
+        if employee_id_param:
+            if str(employee_id_param).isdigit():
+                qs = qs.filter(employeeidnum=employee_id_param)
+            else:
+                qs = qs.filter(id=employee_id_param)
+        return list(qs.order_by("employeeidnum"))
+
+    def _build_month_nested_data(self, year, month, eligible_employees, base_targets_qs=None):
+        from tracking.models import Visit
+
+        if base_targets_qs is None:
+            base_targets_qs = MonthlyTarget.objects.filter(year=year, month=month)
+        else:
+            base_targets_qs = base_targets_qs.filter(year=year, month=month)
+
+        common_target = base_targets_qs.filter(employee__isnull=True).select_related("target_setby").first()
+        ind_targets = {
+            t.employee_id: t
+            for t in base_targets_qs.filter(employee__isnull=False).select_related("employee", "target_setby")
+        }
+
+        emp_ids = [e.id for e in eligible_employees]
+
+        # ── Batch calculate achievements ────────────────────────────────────
+        orders_agg = (
+            OrderItem.objects
+            .filter(
+                order__created_at__year=year,
+                order__created_at__month=month,
+                order__status__in=_PROCESSED_ORDER_STATUSES,
+                order__employee_id__in=emp_ids,
+            )
+            .values("order__employee_id")
+            .annotate(total_kg=Sum("quantity"))
+        )
+        sales_map = {
+            row["order__employee_id"]: round((row["total_kg"] or 0) / 1000, 3)
+            for row in orders_agg
+        }
+
+        colls_agg = (
+            Collection.objects
+            .filter(
+                created_at__year=year,
+                created_at__month=month,
+                status="success",
+                employee_id__in=emp_ids,
+            )
+            .values("employee_id")
+            .annotate(
+                total_cr=Sum(
+                    Case(
+                        When(reference_id="C", then=F("amount") * Value(Decimal("1.000000"))),
+                        When(reference_id="L", then=F("amount") * Value(Decimal("0.010000"))),
+                        When(reference_id="T", then=F("amount") * Value(Decimal("0.000100"))),
+                        default=F("amount") / Value(Decimal("10000000.0")),
+                        output_field=DecimalField(max_digits=14, decimal_places=6),
+                    )
+                ),
+                count=Count("id"),
+            )
+        )
+        colls_map = {
+            row["employee_id"]: (row["total_cr"] or Decimal("0.00"), row["count"] or 0)
+            for row in colls_agg
+        }
+
+        visits_agg = (
+            Visit.objects
+            .filter(
+                created_at__year=year,
+                created_at__month=month,
+                employee_id__in=emp_ids,
+            )
+            .values("employee_id")
+            .annotate(count=Count("id"))
+        )
+        visits_map = {
+            row["employee_id"]: (row["count"] or 0)
+            for row in visits_agg
+        }
+
+        # ── Assemble employee targets ───────────────────────────────────────
+        emp_items = []
+        ind_count = 0
+        common_count = 0
+
+        for emp in eligible_employees:
+            ind_target = ind_targets.get(emp.id)
+            if ind_target:
+                target_type = "individual"
+                target_id = ind_target.id
+                is_custom = True
+                target_dict = _format_target_dict(ind_target)
+                target_setby_id = ind_target.target_setby_id
+                target_setby_details = (
+                    SimpleEmployeeSummarySerializer(ind_target.target_setby).data
+                    if ind_target.target_setby else None
+                )
+                created_at = ind_target.created_at
+                updated_at = ind_target.updated_at
+                ind_count += 1
+            elif common_target:
+                target_type = "common"
+                target_id = common_target.id
+                is_custom = False
+                target_dict = _format_target_dict(common_target)
+                target_setby_id = common_target.target_setby_id
+                target_setby_details = (
+                    SimpleEmployeeSummarySerializer(common_target.target_setby).data
+                    if common_target.target_setby else None
+                )
+                created_at = common_target.created_at
+                updated_at = common_target.updated_at
+                common_count += 1
+            else:
+                target_type = "none"
+                target_id = None
+                is_custom = False
+                target_dict = None
+                target_setby_id = None
+                target_setby_details = None
+                created_at = None
+                updated_at = None
+
+            coll_cr, coll_cnt = colls_map.get(emp.id, (Decimal("0.00"), 0))
+            achieved_data = {
+                "sales_tons": sales_map.get(emp.id, 0.0),
+                "collection_amount": _format_cr_amount(coll_cr),
+                "collection_amount_display": _format_cr_display(coll_cr),
+                "collection_count": coll_cnt,
+                "visits_count": visits_map.get(emp.id, 0),
+            }
+
+            emp_items.append({
+                "employee": SimpleEmployeeSummarySerializer(emp).data,
+                "target_type": target_type,
+                "target_id": target_id,
+                "is_custom": is_custom,
+                "target": target_dict,
+                "achieved": achieved_data,
+                "target_setby": target_setby_id,
+                "target_setby_details": target_setby_details,
+                "created_at": created_at,
+                "updated_at": updated_at,
+            })
+
+        common_target_info = None
+        if common_target:
+            common_target_info = {
+                "id": common_target.id,
+                "sales_target": round(float(common_target.sales_target), 3),
+                "collection_target": _format_cr_amount(Decimal(str(common_target.collection_target))),
+                "visits_target": common_target.visits_target,
+                "target": _format_target_dict(common_target),
+                "target_setby": common_target.target_setby_id,
+                "target_setby_details": (
+                    SimpleEmployeeSummarySerializer(common_target.target_setby).data
+                    if common_target.target_setby else None
+                ),
+                "created_at": common_target.created_at,
+                "updated_at": common_target.updated_at,
+            }
+
+        return {
+            "id": f"{int(year):04d}-{int(month):02d}",
+            "year": int(year),
+            "month": int(month),
+            "common_target": common_target_info,
+            "total_employees": len(emp_items),
+            "individual_targets_count": ind_count,
+            "common_targets_count": common_count,
+            "employees": emp_items,
+        }
+
+    def list(self, request, *args, **kwargs):
+        year_param = request.query_params.get("year")
+        month_param = request.query_params.get("month")
+        emp_param = request.query_params.get("employee_id")
+
+        eligible_employees = self._get_eligible_employees(request, emp_param)
+
+        targets_qs = MonthlyTarget.objects.select_related("employee", "target_setby").all()
+        if year_param:
+            targets_qs = targets_qs.filter(year=year_param)
+        if month_param:
+            targets_qs = targets_qs.filter(month=month_param)
+
+        # Collect distinct (year, month) pairs
+        month_pairs = list(
+            targets_qs.values_list("year", "month")
+            .distinct()
+            .order_by("-year", "-month")
+        )
+
+        # If a specific year & month was requested and no targets exist, return empty list
+        if not month_pairs and year_param and month_param:
+            return Response([], status=status.HTTP_200_OK)
+
+        response_data = [
+            self._build_month_nested_data(y, m, eligible_employees, targets_qs)
+            for y, m in month_pairs
+        ]
+        return Response(response_data, status=status.HTTP_200_OK)
+
+    def retrieve(self, request, *args, **kwargs):
+        lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+        pk = str(self.kwargs.get(lookup_url_kwarg, ""))
+
+        # If pk is "YYYY-MM" (e.g. "2026-09"), return the nested month summary
+        import re
+        if re.match(r"^\d{4}-(0[1-9]|1[0-2])$", pk):
+            y, m = [int(p) for p in pk.split("-")]
+            eligible_employees = self._get_eligible_employees(request)
+            month_data = self._build_month_nested_data(y, m, eligible_employees)
+            return Response(month_data, status=status.HTTP_200_OK)
+
+        return super().retrieve(request, *args, **kwargs)
+
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
+        is_many = isinstance(request.data, list)
+        serializer = self.get_serializer(data=request.data, many=is_many)
         serializer.is_valid(raise_exception=True)
-        instance = serializer.save(target_setby=request.user)
-        read_serializer = MonthlyTargetSerializer(instance)
+        instances = serializer.save(target_setby=request.user)
+        read_serializer = MonthlyTargetSerializer(instances, many=is_many)
         return Response(read_serializer.data, status=status.HTTP_201_CREATED)
 
     def partial_update(self, request, *args, **kwargs):
@@ -736,6 +1004,34 @@ class AdminMonthlyTargetViewSet(viewsets.ModelViewSet):
         return Response(read_serializer.data, status=status.HTTP_200_OK)
 
 
+@extend_schema_view(
+    list=extend_schema(
+        summary="List Monthly Targets",
+        parameters=[
+            OpenApiParameter(
+                name="employee_id",
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description="Filter by employee ID.",
+                required=False,
+            ),
+            OpenApiParameter(
+                name="from_date",
+                type=OpenApiTypes.DATE,
+                location=OpenApiParameter.QUERY,
+                description="Filter by from_date = YYYY-MM-DD",
+                required=False,
+            ),
+            OpenApiParameter(
+                name="to_date",
+                type=OpenApiTypes.DATE,
+                location=OpenApiParameter.QUERY,
+                description="Filter by to_date = YYYY-MM-DD",
+                required=False,
+            ),
+        ],
+    )
+)
 class AdminSpecialTargetViewSet(viewsets.ModelViewSet):
     """
     Admin endpoint for Special Targets.
@@ -789,33 +1085,91 @@ class AdminSpecialTargetViewSet(viewsets.ModelViewSet):
 class EmployeeMonthlyTargetViewSet(viewsets.ReadOnlyModelViewSet):
     """
     Employee endpoint to view their own monthly targets.
-    GET /api/sales/monthly-targets/ (list own targets with optional ?year=, ?month=)
-    GET /api/sales/monthly-targets/{id}/ (retrieve own target)
+    GET /api/sales/monthly-targets/           — list targets (individual + common fallback)
+    GET /api/sales/monthly-targets/{id}/      — retrieve a single target
+
+    Override rule
+    -------------
+    If the employee has an individual target for a given month, that is returned.
+    If no individual target exists for a month, the common target (employee=null)
+    for that month is returned instead.
     """
     permission_classes = [IsAuthenticated, MustChangePasswordPermission]
     serializer_class = MonthlyTargetSerializer
 
     def get_queryset(self):
-        qs = MonthlyTarget.objects.select_related("employee", "target_setby").filter(employee=self.request.user)
-        year = self.request.query_params.get("year")
+        from django.db.models import Q
+        emp  = self.request.user
+        year  = self.request.query_params.get("year")
         month = self.request.query_params.get("month")
+
+        base_qs = MonthlyTarget.objects.select_related("employee", "target_setby")
+
+        # ── Individual targets for this employee ─────────────────────────────
+        individual_qs = base_qs.filter(employee=emp)
         if year:
-            qs = qs.filter(year=year)
+            individual_qs = individual_qs.filter(year=year)
         if month:
-            qs = qs.filter(month=month)
-        return qs
+            individual_qs = individual_qs.filter(month=month)
+
+        # Collect (year, month) pairs already covered by individual targets
+        covered = set(individual_qs.values_list("year", "month"))
+
+        # ── Common targets ───────────────────────────────────────────────
+        common_qs = base_qs.filter(employee__isnull=True)
+        if year:
+            common_qs = common_qs.filter(year=year)
+        if month:
+            common_qs = common_qs.filter(month=month)
+
+        # Exclude common targets for months where an individual target exists
+        if covered:
+            exclude_q = Q()
+            for y, m in covered:
+                exclude_q |= Q(year=y, month=m)
+            common_qs = common_qs.exclude(exclude_q)
+
+        return (individual_qs | common_qs).order_by("-year", "-month")
 
 
 class EmployeeSpecialTargetViewSet(viewsets.ReadOnlyModelViewSet):
     """
     Employee endpoint to view their own special targets.
-    GET /api/sales/special-targets/ (list own special targets)
-    GET /api/sales/special-targets/{id}/ (retrieve own special target)
+    GET /api/sales/special-targets/          — list special targets (individual + common fallback)
+    GET /api/sales/special-targets/{id}/     — retrieve a single special target
+
+    Override rule
+    -------------
+    If the employee has an individual special target whose date range exactly matches
+    a common special target, the individual one takes precedence.
+    Common special targets (employee=null) are shown for date ranges where no
+    individual override exists.
     """
     permission_classes = [IsAuthenticated, MustChangePasswordPermission]
     serializer_class = SpecialTargetSerializer
 
     def get_queryset(self):
-        return SpecialTarget.objects.select_related("employee", "target_setby").filter(employee=self.request.user)
+        from django.db.models import Q
+        emp = self.request.user
+
+        base_qs = SpecialTarget.objects.select_related("employee", "target_setby")
+
+        # ── Individual special targets for this employee ─────────────────────
+        individual_qs = base_qs.filter(employee=emp)
+
+        # Collect (from_date, to_date) pairs covered by individual targets
+        covered_ranges = set(individual_qs.values_list("from_date", "to_date"))
+
+        # ── Common special targets ─────────────────────────────────────
+        common_qs = base_qs.filter(employee__isnull=True)
+
+        # Exclude common targets whose date range is overridden individually
+        if covered_ranges:
+            exclude_q = Q()
+            for fd, td in covered_ranges:
+                exclude_q |= Q(from_date=fd, to_date=td)
+            common_qs = common_qs.exclude(exclude_q)
+
+        return (individual_qs | common_qs).order_by("-from_date")
 
 

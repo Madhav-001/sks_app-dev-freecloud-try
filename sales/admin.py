@@ -86,6 +86,7 @@ class CollectionAdmin(SoftDeleteAdminMixin, admin.ModelAdmin):
         "sub_dealer",
         "employee",
         "amount",
+        "reference_id",
         "payment_type",
         "status",
         "is_deleted",

@@ -206,20 +206,35 @@ class Collection(SoftDeleteModelMixin, models.Model):
 
 class MonthlyTarget(models.Model):
     """
-    Standard monthly KPI target for a sales employee.
-    Enforces exactly one target per employee per month/year.
+    Standard monthly KPI target.
+
+    Two flavours:
+      Common target     — employee=None, id='YYYY-MM'
+                          Default for every employee that has NO individual
+                          target for that month.
+      Individual target — employee=<Employee>, id='YYYY-MM-<employeeidnum>'
+                          Overrides the common target for that specific employee.
+
+    The auto-generated PK guarantees uniqueness without a separate constraint:
+      • 'YYYY-MM'   can only exist once (one common target per month)
+      • 'YYYY-MM-N' can only exist once per employee per month
     """
     id = models.CharField(
         primary_key=True,
-        max_length=7,
+        max_length=20,
         editable=False,
-        help_text="Target ID in 'YYYY-MM' format (e.g. '2026-08')"
+        help_text=(
+            "Auto-generated. 'YYYY-MM' for common (employee=null); "
+            "'YYYY-MM-<employeeidnum>' for individual targets."
+        )
     )
     employee = models.ForeignKey(
         Employee,
         on_delete=models.CASCADE,
         related_name="monthly_targets",
-        help_text="The sales employee this target is assigned to"
+        help_text="Employee this target belongs to. Null = common target for all employees.",
+        null=True,
+        blank=True,
     )
     year = models.PositiveIntegerField(
         validators=[MinValueValidator(2020), MaxValueValidator(2100)],
@@ -231,8 +246,8 @@ class MonthlyTarget(models.Model):
     )
 
     sales_target = models.DecimalField(
-        max_digits=14, decimal_places=2, default=0.00,
-        help_text="Target sales amount in currency"
+        max_digits=14, decimal_places=3, default=0.000,
+        help_text="Target sales weight in tons (e.g. 1.250 = 1 ton 250 kg)"
     )
     collection_target = models.DecimalField(
         max_digits=14, decimal_places=2, default=0.00,
@@ -256,12 +271,10 @@ class MonthlyTarget(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=["employee", "year", "month"],
-                name="unique_employee_monthly_target"
-            )
-        ]
+        # No UniqueConstraint needed — the PK already guarantees:
+        #   • One common target per month  ('YYYY-MM' is unique)
+        #   • One individual target per employee per month  ('YYYY-MM-N' is unique)
+        constraints = []
         indexes = [
             models.Index(fields=["employee", "year", "month"]),
             models.Index(fields=["year", "month"]),
@@ -270,11 +283,19 @@ class MonthlyTarget(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.id and self.year and self.month:
-            self.id = f"{int(self.year):04d}-{int(self.month):02d}"
+            if self.employee_id is None:
+                # Common target — one per calendar month
+                self.id = f"{int(self.year):04d}-{int(self.month):02d}"
+            else:
+                # Individual target — unique per employee per month
+                emp = self.employee  # lazy-loads if not already in cache
+                self.id = f"{int(self.year):04d}-{int(self.month):02d}-{emp.employeeidnum}"
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.employee.username} - {self.month}/{self.year} Target"
+        if self.employee:
+            return f"{self.employee.username} - {self.month}/{self.year} Target"
+        return f"Common - {self.month}/{self.year} Target"
 
 
 class SpecialTarget(models.Model):
@@ -287,7 +308,9 @@ class SpecialTarget(models.Model):
         Employee,
         on_delete=models.CASCADE,
         related_name="special_targets",
-        help_text="The sales employee this target is assigned to"
+        help_text="Employee this target belongs to. Null = common special target for all employees.",
+        null=True,
+        blank=True,
     )
     title = models.CharField(
         max_length=255,
@@ -299,8 +322,8 @@ class SpecialTarget(models.Model):
     to_date = models.DateField(help_text="Target duration end date")
 
     sales_target = models.DecimalField(
-        max_digits=14, decimal_places=2, default=0.00,
-        help_text="Target sales amount in currency"
+        max_digits=14, decimal_places=3, default=0.000,
+        help_text="Target sales weight in tons (e.g. 1.250 = 1 ton 250 kg)"
     )
     collection_target = models.DecimalField(
         max_digits=14, decimal_places=2, default=0.00,
@@ -331,5 +354,9 @@ class SpecialTarget(models.Model):
         ordering = ["-from_date"]
 
     def __str__(self):
-        return f"{self.employee.username} - Special Target ({self.from_date} to {self.to_date})"
+        if self.employee:
+            return f"{self.employee.username} - Special Target ({self.from_date} to {self.to_date})"
+        return f"Common - Special Target ({self.from_date} to {self.to_date})"
+
+
 
