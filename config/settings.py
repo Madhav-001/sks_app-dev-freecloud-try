@@ -32,7 +32,7 @@ ALLOWED_HOSTS = [
     "mady21.pythonanywhere.com",
     "sri-kumaran-steels.web.app",
     "sri-kumaran-steels.firebaseapp.com",
-    "https://sks-admin.vercel.app",
+    "sks-admin.vercel.app",
     "*",
 ]
 
