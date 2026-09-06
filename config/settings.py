@@ -32,6 +32,7 @@ ALLOWED_HOSTS = [
     "mady21.pythonanywhere.com",
     "sri-kumaran-steels.web.app",
     "sri-kumaran-steels.firebaseapp.com",
+    "https://sks-admin.vercel.app",
     "*",
 ]
 
@@ -40,6 +41,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "https://sri-kumaran-steels.web.app",
     "https://sri-kumaran-steels.firebaseapp.com",
+    "https://sks-admin.vercel.app",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
