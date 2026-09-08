@@ -601,6 +601,10 @@ class AdminOrderAnalyticsView(APIView):
         )
         if target_employee is not None:
             order_qs = order_qs.filter(employee=target_employee)
+        elif not user.is_owner:
+            order_qs = order_qs.filter(
+                employee__role__hierarchy_level__gte=user.hierarchy_level
+            ).exclude(employee__is_superuser=True).exclude(employee__employeeidnum=0)
 
         # ── Build analytics ───────────────────────────────────────────────
         analytics = _build_analytics(order_qs, product_id)

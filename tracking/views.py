@@ -137,6 +137,11 @@ class AttendanceViewSet(viewsets.GenericViewSet):
         """Admin-only: returns today's working employee attendance list."""
         today = timezone.now().date()
         attendances = Attendance.objects.filter(date=today).select_related("employee", "employee__role")
+        requester = request.user
+        if not requester.is_owner:
+            attendances = attendances.filter(
+                employee__role__hierarchy_level__gte=requester.hierarchy_level
+            ).exclude(employee__is_superuser=True).exclude(employee__employeeidnum=0)
 
         results = [
             self._build_attendance_dict(att, request, id_value=att.employee.id)
@@ -218,6 +223,8 @@ class AttendanceViewSet(viewsets.GenericViewSet):
         else:
             target_date = timezone.localdate()
 
+        requester = request.user
+
         # --- Fetch all attendance records for the target date ---
         attendances_qs = (
             Attendance.objects
@@ -225,6 +232,12 @@ class AttendanceViewSet(viewsets.GenericViewSet):
             .select_related("employee", "employee__role")
             .order_by("employee__employeeidnum")
         )
+
+        # Non-owners only see attendance of equivalent and lower-level employees (never superiors)
+        if not requester.is_owner:
+            attendances_qs = attendances_qs.filter(
+                employee__role__hierarchy_level__gte=requester.hierarchy_level
+            ).exclude(employee__is_superuser=True).exclude(employee__employeeidnum=0)
 
         # Split into checked-in / checked-out
         checked_in = [att for att in attendances_qs if att.end_time is None]
@@ -239,6 +252,10 @@ class AttendanceViewSet(viewsets.GenericViewSet):
             .select_related("role")
             .order_by("employeeidnum")
         )
+        if not requester.is_owner:
+            absent_employees = absent_employees.filter(
+                role__hierarchy_level__gte=requester.hierarchy_level
+            ).exclude(is_superuser=True).exclude(employeeidnum=0)
 
         # Build response dictionaries
         def _build(att):
@@ -362,6 +379,14 @@ class AttendanceViewSet(viewsets.GenericViewSet):
                 {"error": "Employee not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+
+        requester = request.user
+        if not requester.is_owner:
+            if employee.hierarchy_level < requester.hierarchy_level:
+                return response.Response(
+                    {"detail": "You do not have permission to view attendance details for higher-level employees."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
 
         # --- Resolve month / year from query params or body ---
         month_param = request.query_params.get("month")
@@ -492,7 +517,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
     def retrieve(self, request, pk=None):
         """Returns 1 full attendance details for that employee and admin."""
         try:
-            att = Attendance.objects.select_related("employee").get(id=pk)
+            att = Attendance.objects.select_related("employee", "employee__role").get(id=pk)
         except Attendance.DoesNotExist:
             return response.Response(
                 {"error": "Attendance not found."},
@@ -500,13 +525,14 @@ class AttendanceViewSet(viewsets.GenericViewSet):
             )
 
         user = request.user
-        # Hierarchy-safe admin check: any role with level <= ADMIN_MAX_LEVEL
-        # can view other employees' attendance records.
-        if not is_admin_of(user) and att.employee_id != user.id:
-            return response.Response(
-                {"detail": "You do not have permission to access this attendance details."},
-                status=status.HTTP_403_FORBIDDEN
-            )
+        # Non-owners can only view their own record or equivalent/lower level employees (if admin)
+        if not user.is_owner:
+            if att.employee_id != user.id:
+                if not is_admin_of(user) or att.employee.hierarchy_level < user.hierarchy_level:
+                    return response.Response(
+                        {"detail": "You do not have permission to access this attendance details."},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
 
         entry = self._build_attendance_dict(att, request)
         return response.Response(entry, status=status.HTTP_200_OK)
@@ -514,12 +540,19 @@ class AttendanceViewSet(viewsets.GenericViewSet):
     def partial_update(self, request, pk=None):
         """Allows updating attendance details (like check-in/out KM, times, or status)."""
         try:
-            att = Attendance.objects.get(id=pk)
+            att = Attendance.objects.select_related("employee", "employee__role").get(id=pk)
         except Attendance.DoesNotExist:
             return response.Response(
                 {"error": "Attendance record not found."},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+        if not request.user.is_owner:
+            if not request.user.can_manage(att.employee):
+                return response.Response(
+                    {"detail": "You cannot edit attendance of an employee who is ranked the same as or higher than you."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
         serializer = self.get_serializer(att, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
@@ -1605,11 +1638,17 @@ class MilageViewSet(viewsets.GenericViewSet):
                     status=status.HTTP_403_FORBIDDEN,
                 )
             try:
-                target_employee = Employee.objects.get(id=employee_id_param)
+                target_employee = Employee.objects.select_related("role").get(id=employee_id_param)
             except (Employee.DoesNotExist, ValueError):
                 return response.Response(
                     {"error": "Employee not found."},
                     status=status.HTTP_404_NOT_FOUND,
+                )
+
+            if not user.is_owner and target_employee.hierarchy_level < user.hierarchy_level:
+                return response.Response(
+                    {"detail": "You do not have permission to view mileage data for higher-level employees."},
+                    status=status.HTTP_403_FORBIDDEN,
                 )
 
         # --- Resolve date ---
@@ -1714,9 +1753,13 @@ class AdminDailyMilageView(viewsets.GenericViewSet):
         milage_qs = (
             Milage.objects
             .filter(date=target_date)
-            .select_related("employee", "attendance_id")
+            .select_related("employee", "attendance_id", "employee__role")
             .order_by("employee__employeeidnum")
         )
+        if not request.user.is_owner:
+            milage_qs = milage_qs.filter(
+                employee__role__hierarchy_level__gte=request.user.hierarchy_level
+            ).exclude(employee__is_superuser=True).exclude(employee__employeeidnum=0)
 
         # ---------- Response ----------
         serializer = AdminDailyMilageSerializer(milage_qs, many=True)
@@ -1817,6 +1860,12 @@ class AdminEmployeeMilageSummaryView(viewsets.GenericViewSet):
             return response.Response(
                 {"error": "Employee not found."},
                 status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not request.user.is_owner and employee.hierarchy_level < request.user.hierarchy_level:
+            return response.Response(
+                {"detail": "You do not have permission to view mileage details for higher-level employees."},
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         # ── Parse cursor ───────────────────────────────────────────────────
@@ -2015,7 +2064,12 @@ class AdminSODReportView(APIView):
         responses={200: SODReportResponseSerializer},
     )
     def get(self, request, employee_id):
-        target_employee = get_object_or_404(Employee, pk=employee_id)
+        target_employee = get_object_or_404(Employee.objects.select_related("role"), pk=employee_id)
+        if not request.user.is_owner and target_employee.hierarchy_level < request.user.hierarchy_level:
+            return response.Response(
+                {"detail": "You do not have permission to view report details for higher-level employees."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         target_date = _parse_report_date(request.query_params.get("date"))
         data = calculate_sod_data(target_employee, target_date)
         return response.Response(data, status=status.HTTP_200_OK)
@@ -2033,7 +2087,12 @@ class AdminEODReportView(APIView):
         responses={200: EODReportResponseSerializer},
     )
     def get(self, request, employee_id):
-        target_employee = get_object_or_404(Employee, pk=employee_id)
+        target_employee = get_object_or_404(Employee.objects.select_related("role"), pk=employee_id)
+        if not request.user.is_owner and target_employee.hierarchy_level < request.user.hierarchy_level:
+            return response.Response(
+                {"detail": "You do not have permission to view report details for higher-level employees."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         target_date = _parse_report_date(request.query_params.get("date"))
         data = calculate_eod_data(target_employee, target_date)
         return response.Response(data, status=status.HTTP_200_OK)

@@ -113,6 +113,12 @@ class OrderViewSet(viewsets.ModelViewSet):
             raise PermissionDenied(
                 "Access denied. Only the order creator, Owner, or users with 'Orders manage' permission can access this order."
             )
+        if not user.is_owner and str(instance.employee_id) != str(user.pk):
+            if instance.employee.hierarchy_level < user.hierarchy_level:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied(
+                    "Access denied. You cannot access orders of higher-level employees."
+                )
 
     @staticmethod
     def _is_null(val):
@@ -156,6 +162,10 @@ class OrderViewSet(viewsets.ModelViewSet):
             qs = queryset.filter(created_at__date=timezone.localdate())
             if not is_admin:
                 qs = qs.filter(employee=user)
+            elif not user.is_owner:
+                qs = qs.filter(
+                    employee__role__hierarchy_level__gte=user.hierarchy_level
+                ).exclude(employee__is_superuser=True).exclude(employee__employeeidnum=0)
             return qs
 
         # ── employee_id guard ──────────────────────────────────────────
@@ -171,6 +181,20 @@ class OrderViewSet(viewsets.ModelViewSet):
         # ── Ownership scoping ─────────────────────────────────────────
         if not is_admin:
             queryset = queryset.filter(employee=user)
+        elif not user.is_owner:
+            queryset = queryset.filter(
+                employee__role__hierarchy_level__gte=user.hierarchy_level
+            ).exclude(employee__is_superuser=True).exclude(employee__employeeidnum=0)
+            if not null(employee_id):
+                try:
+                    from users.models import Employee
+                    target_emp = Employee.objects.select_related("role").get(id=employee_id)
+                    if target_emp.hierarchy_level < user.hierarchy_level:
+                        from rest_framework.exceptions import PermissionDenied
+                        raise PermissionDenied("Access denied. You cannot view orders of higher-level employees.")
+                except Employee.DoesNotExist:
+                    pass
+                queryset = queryset.filter(employee_id=employee_id)
         elif not null(employee_id):
             queryset = queryset.filter(employee_id=employee_id)
 
@@ -434,6 +458,12 @@ class CollectionViewSet(viewsets.ModelViewSet):
             raise PermissionDenied(
                 "Access denied. Only the collection creator, Owner, or users with 'Collection manage' permission can access this collection."
             )
+        if not user.is_owner and str(instance.employee_id) != str(user.pk):
+            if instance.employee.hierarchy_level < user.hierarchy_level:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied(
+                    "Access denied. You cannot access collections of higher-level employees."
+                )
 
     @staticmethod
     def _is_null(val):
@@ -483,6 +513,10 @@ class CollectionViewSet(viewsets.ModelViewSet):
             qs = queryset.filter(created_at__date=timezone.localdate())
             if not is_admin:
                 qs = qs.filter(employee=user)
+            elif not user.is_owner:
+                qs = qs.filter(
+                    employee__role__hierarchy_level__gte=user.hierarchy_level
+                ).exclude(employee__is_superuser=True).exclude(employee__employeeidnum=0)
             return qs
 
         # ── employee_id guard ──────────────────────────────────────────
@@ -499,6 +533,20 @@ class CollectionViewSet(viewsets.ModelViewSet):
         # Non-admin employees are ALWAYS limited to their own records.
         if not is_admin:
             queryset = queryset.filter(employee=user)
+        elif not user.is_owner:
+            queryset = queryset.filter(
+                employee__role__hierarchy_level__gte=user.hierarchy_level
+            ).exclude(employee__is_superuser=True).exclude(employee__employeeidnum=0)
+            if not null(employee_id):
+                try:
+                    from users.models import Employee
+                    target_emp = Employee.objects.select_related("role").get(id=employee_id)
+                    if target_emp.hierarchy_level < user.hierarchy_level:
+                        from rest_framework.exceptions import PermissionDenied
+                        raise PermissionDenied("Access denied. You cannot view collections of higher-level employees.")
+                except Employee.DoesNotExist:
+                    pass
+                queryset = queryset.filter(employee_id=employee_id)
         elif not null(employee_id):
             # Admins can optionally narrow to a specific employee.
             queryset = queryset.filter(employee_id=employee_id)
