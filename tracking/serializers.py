@@ -254,3 +254,42 @@ class AdminDailyMilageSerializer(serializers.ModelSerializer):
         if att is None:
             return False
         return att.end_km is not None
+
+
+# ---------------------------------------------------------------------------
+# Admin — Salesman Visit Count serializers
+# ---------------------------------------------------------------------------
+
+class AdminSalesmanDailyVisitBreakdownSerializer(serializers.Serializer):
+    """Daily visit breakdown per salesman."""
+    date = serializers.DateField(format='%Y-%m-%d')
+    total_visits = serializers.IntegerField()
+    dealer_visits = serializers.IntegerField()
+    client_visits = serializers.IntegerField()
+
+
+class AdminSalesmanVisitCountItemSerializer(serializers.Serializer):
+    """Visit count statistics for a single salesman."""
+    employee_id = serializers.UUIDField()
+    employeeidnum = serializers.IntegerField()
+    name = serializers.CharField()
+    username = serializers.CharField()
+    phone = serializers.CharField(allow_blank=True)
+    role = serializers.CharField()
+    profile_picture = serializers.CharField(allow_null=True)
+    total_visits = serializers.IntegerField()
+    dealer_visits = serializers.IntegerField()
+    client_visits = serializers.IntegerField()
+    daily_breakdown = AdminSalesmanDailyVisitBreakdownSerializer(many=True)
+
+
+class AdminSalesmanVisitCountResponseSerializer(serializers.Serializer):
+    """Top-level response structure for Admin Salesman Visit Count."""
+    filter_type = serializers.CharField()
+    start_date = serializers.DateField(format='%Y-%m-%d')
+    end_date = serializers.DateField(format='%Y-%m-%d')
+    total_salesmen = serializers.IntegerField()
+    total_visits = serializers.IntegerField()
+    total_dealer_visits = serializers.IntegerField()
+    total_client_visits = serializers.IntegerField()
+    results = AdminSalesmanVisitCountItemSerializer(many=True)

@@ -5,9 +5,13 @@ from .views import (
     AdminEmployeeMilageSummaryView,
     AdminSODReportView,
     AdminEODReportView,
+    AdminSalesmanVisitCountView,
 )
 
 urlpatterns = [
+    # ── Salesman Visit Count ────────────────────────────────────────────────
+    # GET /api/admin/tracking/visit/
+    path('visit/', AdminSalesmanVisitCountView.as_view(), name='admin-salesman-visit-count'),
     # ── Attendance ──────────────────────────────────────────────────────────
 
     # Today's working employees (basic list)

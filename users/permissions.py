@@ -196,6 +196,16 @@ class IsOwnerOrCollectionManage(permissions.BasePermission):
         return has_collection_manage_permission(request.user)
 
 
+class IsOwnerOrVisitManage(permissions.BasePermission):
+    """
+    Allows access only to Owner/superuser or roles with visit_manage=True.
+    """
+    message = "You do not have permission to perform this action. Contact your administrator."
+
+    def has_permission(self, request, view):
+        return has_visit_manage_permission(request.user)
+
+
 class IsTargetAdmin(permissions.BasePermission):
     """
     Allows access only to Owner/superuser or roles with at least one of

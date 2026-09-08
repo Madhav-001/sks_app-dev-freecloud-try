@@ -56,6 +56,13 @@ in achived data return that same number employee given. but, actuval need calcul
 
 
 
+i need new "GET /api/admin/tracking/visit/" API for all SALESMAN's visit count return perticular day or week or month wise (or)perticuler date range wise. its only list salesman dats not other role employee data. and this only for administration like "Owner" and "who have access to 'Visit manage'?" can access this dates. 
+
+after complet this give me propmt for frountend intagration propmt for using this API capabelitys and IO's to read and filliter.
+
+ok now give me new propmt for itagrat this ["GET  /api/tracking/visit/{employee_id}/" - Returns a list of visits of the specified employee for the specified date (Admin-only).] and new [GET /api/admin/tracking/visit/ ] api bouth inagartion prompt. i didint use your previews prompt, i use this new prompt for "Visits" admin page. 
+
+
 
 
 

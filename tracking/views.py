@@ -1,5 +1,8 @@
 import json
-from datetime import datetime, date
+import calendar
+from datetime import datetime, date, timedelta
+from django.db.models import Count, Q
+from django.db.models.functions import TruncDate
 from rest_framework import status, response, parsers, viewsets, mixins
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -17,6 +20,7 @@ from .serializers import (
     VisitBulkSyncSerializer,
     MilageSerializer,
     AdminDailyMilageSerializer,
+    AdminSalesmanVisitCountResponseSerializer,
 )
 from .report_serializers import (
     SODInputSerializer,
@@ -31,7 +35,14 @@ from .report_service import (
 )
 from .distance_serializers import get_active_distance_serializer
 from users.models import Employee
-from users.permissions import IsAdminManagerOrOwner, RoleBasedPermission, is_admin_of, MustChangePasswordPermission
+from users.permissions import (
+    IsAdminManagerOrOwner,
+    RoleBasedPermission,
+    is_admin_of,
+    MustChangePasswordPermission,
+    IsOwnerOrVisitManage,
+    has_visit_manage_permission,
+)
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 
@@ -2026,4 +2037,350 @@ class AdminEODReportView(APIView):
         target_date = _parse_report_date(request.query_params.get("date"))
         data = calculate_eod_data(target_employee, target_date)
         return response.Response(data, status=status.HTTP_200_OK)
+
+
+# ---------------------------------------------------------------------------
+# Admin — Salesman Visit Count API
+# ---------------------------------------------------------------------------
+
+class AdminSalesmanVisitCountView(APIView):
+    """
+    GET /api/admin/tracking/visit/
+
+    Returns visit counts for all SALESMAN employees.
+    Supports filtering by:
+      - Day:           ?date=YYYY-MM-DD (or ?period=day)
+      - Week:          ?period=week (&date=YYYY-MM-DD) -> Monday to Sunday
+      - Month:         ?period=month (&month=X&year=Y) -> 1st to last day of month
+      - Custom Range:  ?from_date=YYYY-MM-DD&to_date=YYYY-MM-DD
+      - Specific Salesman: ?employee_id=<uuid or employeeidnum> (optional)
+
+    Access: OWNER or roles with visit_manage=True in EmployeeRole.
+    """
+    permission_classes = [IsAuthenticated, MustChangePasswordPermission, IsOwnerOrVisitManage]
+
+    @staticmethod
+    def _is_null_value(val):
+        """Return True when a param value is absent, empty, or string 'null'/'none'."""
+        if val is None:
+            return True
+        if isinstance(val, str) and (val.strip() == "" or val.strip().lower() in ("null", "none")):
+            return True
+        return False
+
+    def _extract_params(self, request):
+        """Extract parameters from query params or JSON request body."""
+        params = {}
+        for key, val in request.query_params.items():
+            if not self._is_null_value(val):
+                params[key] = str(val).strip()
+
+        if not params:
+            body_data = None
+            try:
+                body_data = request.data
+            except Exception:
+                pass
+
+            if not body_data and getattr(request, "body", None):
+                try:
+                    body_data = json.loads(request.body)
+                except Exception:
+                    pass
+
+            if isinstance(body_data, list) and len(body_data) > 0 and isinstance(body_data[0], dict):
+                body_data = body_data[0]
+
+            if isinstance(body_data, dict):
+                for k, v in body_data.items():
+                    if not self._is_null_value(v):
+                        params[k] = str(v).strip()
+
+        return params
+
+    def _parse_date(self, val, field_name="date"):
+        """Parse various date formats or raise ValidationError."""
+        if self._is_null_value(val):
+            return None
+        val_str = str(val).strip()
+        formats = ["%Y-%m-%d", "%d:%m:%Y", "%d-%m-%Y", "%d/%m/%Y", "%Y/%m/%d"]
+        for fmt in formats:
+            try:
+                return datetime.strptime(val_str, fmt).date()
+            except ValueError:
+                continue
+        raise ValidationError(
+            {field_name: f"Invalid date format '{val}'. Expected format YYYY-MM-DD or DD:MM:YYYY."}
+        )
+
+    def _resolve_date_range(self, params):
+        """
+        Determine start_date, end_date, and filter_type based on parameters.
+        """
+        today = timezone.localdate()
+        period = params.get("period") or params.get("filter_type")
+        from_date_raw = params.get("from_date") or params.get("start_date")
+        to_date_raw = params.get("to_date") or params.get("end_date")
+        date_raw = params.get("date")
+        month_raw = params.get("month")
+        year_raw = params.get("year")
+
+        # Case 1: Custom date range
+        if from_date_raw or to_date_raw:
+            from_date = self._parse_date(from_date_raw, "from_date") if from_date_raw else None
+            to_date = self._parse_date(to_date_raw, "to_date") if to_date_raw else None
+
+            if from_date and to_date:
+                if from_date > to_date:
+                    raise ValidationError({"from_date": "from_date cannot be after to_date."})
+                start_date = from_date
+                end_date = to_date
+            elif from_date:
+                start_date = from_date
+                end_date = max(from_date, today)
+            else:
+                start_date = to_date
+                end_date = to_date
+            filter_type = "custom_range"
+
+        # Case 2: Month wise
+        elif (period and period.lower() == "month") or month_raw:
+            m = None
+            y = None
+            if month_raw and "-" in str(month_raw):
+                try:
+                    parts = str(month_raw).split("-")
+                    y = int(parts[0])
+                    m = int(parts[1])
+                except (ValueError, IndexError):
+                    pass
+
+            if m is None and month_raw:
+                try:
+                    m = int(month_raw)
+                except ValueError:
+                    raise ValidationError({"month": f"Invalid month '{month_raw}'. Expected a number 1-12."})
+
+            if year_raw:
+                try:
+                    y = int(year_raw)
+                except ValueError:
+                    raise ValidationError({"year": f"Invalid year '{year_raw}'."})
+
+            if m is None:
+                if date_raw:
+                    parsed_d = self._parse_date(date_raw, "date")
+                    m = parsed_d.month
+                    y = parsed_d.year
+                else:
+                    m = today.month
+                    y = today.year
+
+            if y is None:
+                y = today.year
+
+            if not (1 <= m <= 12):
+                raise ValidationError({"month": f"Month must be between 1 and 12, got {m}."})
+
+            _, last_day = calendar.monthrange(y, m)
+            start_date = date(y, m, 1)
+            end_date = date(y, m, last_day)
+            filter_type = "month"
+
+        # Case 3: Week wise
+        elif period and period.lower() == "week":
+            ref_date = self._parse_date(date_raw, "date") if date_raw else today
+            start_date = ref_date - timedelta(days=ref_date.weekday())  # Monday
+            end_date = start_date + timedelta(days=6)                   # Sunday
+            filter_type = "week"
+
+        # Case 4: Day wise (or default to today)
+        else:
+            target_date = self._parse_date(date_raw, "date") if date_raw else today
+            start_date = target_date
+            end_date = target_date
+            filter_type = "day"
+
+        return start_date, end_date, filter_type
+
+    @extend_schema(
+        summary="Admin: All Salesman Visit Count (day/week/month/range)",
+        description=(
+            "Returns visit count statistics for all employees with the **SALESMAN** role.\n\n"
+            "Non-salesman employees are strictly excluded.\n\n"
+            "**Access:** OWNER only, or roles with *Visit Manage* enabled in EmployeeRole.\n\n"
+            "**Filter Modes:**\n"
+            "- **Day:** `?date=YYYY-MM-DD` or `?period=day` (defaults to today)\n"
+            "- **Week:** `?period=week` (and optional `?date=YYYY-MM-DD` to specify the week; defaults to current week)\n"
+            "- **Month:** `?period=month` (and optional `?month=M&year=YYYY`, defaults to current month)\n"
+            "- **Date Range:** `?from_date=YYYY-MM-DD&to_date=YYYY-MM-DD` (supports formats `YYYY-MM-DD` or `DD:MM:YYYY`)\n"
+            "- **Salesman Filter (optional):** `?employee_id=<uuid or employeeidnum>`\n"
+        ),
+        parameters=[
+            OpenApiParameter(name="period", type=str, location=OpenApiParameter.QUERY, required=False,
+                             description="Filter period: 'day', 'week', or 'month'"),
+            OpenApiParameter(name="date", type=str, location=OpenApiParameter.QUERY, required=False,
+                             description="Target date for day or week calculation (format: YYYY-MM-DD or DD:MM:YYYY)"),
+            OpenApiParameter(name="month", type=int, location=OpenApiParameter.QUERY, required=False,
+                             description="Month number (1-12) for month-wise count"),
+            OpenApiParameter(name="year", type=int, location=OpenApiParameter.QUERY, required=False,
+                             description="Year (e.g. 2026) for month-wise count"),
+            OpenApiParameter(name="from_date", type=str, location=OpenApiParameter.QUERY, required=False,
+                             description="Start date for custom range (format: YYYY-MM-DD or DD:MM:YYYY)"),
+            OpenApiParameter(name="to_date", type=str, location=OpenApiParameter.QUERY, required=False,
+                             description="End date for custom range (format: YYYY-MM-DD or DD:MM:YYYY)"),
+            OpenApiParameter(name="employee_id", type=str, location=OpenApiParameter.QUERY, required=False,
+                             description="Optional UUID or employee ID number to filter a specific salesman"),
+        ],
+        responses={200: AdminSalesmanVisitCountResponseSerializer},
+    )
+    def get(self, request):
+        # 1. Authorization check
+        if not has_visit_manage_permission(request.user):
+            return response.Response(
+                {"detail": "You do not have permission to view visit count data. Requires Owner or Visit Manage access."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        params = self._extract_params(request)
+
+        # 2. Resolve date range and filter type
+        start_date, end_date, filter_type = self._resolve_date_range(params)
+
+        # 3. Query salesmen only
+        salesmen_qs = (
+            Employee.objects
+            .filter(
+                is_active=True,
+                is_deleted=False,
+                role__name__iexact="SALESMAN",
+            )
+            .exclude(is_superuser=True)
+            .select_related("role")
+            .order_by("employeeidnum")
+        )
+
+        employee_id_param = params.get("employee_id")
+        if employee_id_param:
+            if str(employee_id_param).isdigit():
+                salesmen_qs = salesmen_qs.filter(employeeidnum=int(employee_id_param))
+            else:
+                salesmen_qs = salesmen_qs.filter(id=employee_id_param)
+
+            if not salesmen_qs.exists():
+                # Check if employee exists with a different role
+                lookup = {"employeeidnum": int(employee_id_param)} if str(employee_id_param).isdigit() else {"id": employee_id_param}
+                other_emp = Employee.objects.filter(**lookup).select_related("role").first()
+                if other_emp:
+                    return response.Response(
+                        {"error": f"Employee '{other_emp.name or other_emp.username}' has role '{other_emp.role_name}', not 'SALESMAN'."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                return response.Response(
+                    {"error": f"Salesman with identifier '{employee_id_param}' was not found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+        salesmen = list(salesmen_qs)
+        salesman_ids = [s.id for s in salesmen]
+
+        # 4. Batch query visits for target salesmen in date range
+        visits_base = Visit.objects.filter(
+            employee_id__in=salesman_ids,
+            created_at__date__gte=start_date,
+            created_at__date__lte=end_date,
+        )
+
+        # Aggregation: totals per employee
+        totals_agg = (
+            visits_base
+            .values("employee_id")
+            .annotate(
+                total=Count("id"),
+                dealer=Count("id", filter=Q(type="Dealer")),
+                client=Count("id", filter=Q(type="Client")),
+            )
+        )
+        totals_map = {
+            row["employee_id"]: {
+                "total": row["total"],
+                "dealer": row["dealer"],
+                "client": row["client"],
+            }
+            for row in totals_agg
+        }
+
+        # Aggregation: daily breakdown per employee and date
+        daily_agg = (
+            visits_base
+            .annotate(visit_date=TruncDate("created_at"))
+            .values("employee_id", "visit_date")
+            .annotate(
+                total=Count("id"),
+                dealer=Count("id", filter=Q(type="Dealer")),
+                client=Count("id", filter=Q(type="Client")),
+            )
+            .order_by("visit_date")
+        )
+        daily_map = {}
+        for row in daily_agg:
+            emp_id = row["employee_id"]
+            raw_d = row["visit_date"]
+            v_date_str = raw_d.strftime("%Y-%m-%d") if hasattr(raw_d, "strftime") else str(raw_d)
+            if emp_id not in daily_map:
+                daily_map[emp_id] = []
+            daily_map[emp_id].append({
+                "date": v_date_str,
+                "total_visits": row["total"],
+                "dealer_visits": row["dealer"],
+                "client_visits": row["client"],
+            })
+
+        # 5. Build results list
+        results = []
+        overall_total_visits = 0
+        overall_total_dealer = 0
+        overall_total_client = 0
+
+        for emp in salesmen:
+            counts = totals_map.get(emp.id, {"total": 0, "dealer": 0, "client": 0})
+            breakdown = daily_map.get(emp.id, [])
+
+            overall_total_visits += counts["total"]
+            overall_total_dealer += counts["dealer"]
+            overall_total_client += counts["client"]
+
+            profile_pic_url = None
+            if emp.profile_picture:
+                try:
+                    profile_pic_url = request.build_absolute_uri(emp.profile_picture.url)
+                except Exception:
+                    profile_pic_url = emp.profile_picture.url
+
+            results.append({
+                "employee_id": emp.id,
+                "employeeidnum": emp.employeeidnum,
+                "name": emp.name if emp.name else emp.username,
+                "username": emp.username,
+                "phone": emp.phone or "",
+                "role": emp.role_name,
+                "profile_picture": profile_pic_url,
+                "total_visits": counts["total"],
+                "dealer_visits": counts["dealer"],
+                "client_visits": counts["client"],
+                "daily_breakdown": breakdown,
+            })
+
+        response_data = {
+            "filter_type": filter_type,
+            "start_date": start_date.strftime("%Y-%m-%d"),
+            "end_date": end_date.strftime("%Y-%m-%d"),
+            "total_salesmen": len(salesmen),
+            "total_visits": overall_total_visits,
+            "total_dealer_visits": overall_total_dealer,
+            "total_client_visits": overall_total_client,
+            "results": results,
+        }
+
+        return response.Response(response_data, status=status.HTTP_200_OK)
 
