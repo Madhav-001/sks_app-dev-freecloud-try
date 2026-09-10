@@ -75,3 +75,25 @@ this is my 1 page deatails for 1 employee. creata new "GET /api/admin/auth/emplo
 
 
 
+what si the deffernce between this["GET /api/admin/auth/employee/{id}/" "GET /api/auth/employee/{id}/] 2 API's?
+why you add this 2nd api? 
+i ask this API only for ADMIN panel. you made this for that? who is admin in your point of view? 
+
+
+
+give me prompt for integrate this into my front-end.
+
+
+
+now add new function in for errors.log save in locally with time and date with proper space formatting.
+
+
+
+
+
+
+
+
+
+
+

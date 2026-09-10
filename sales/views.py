@@ -168,12 +168,22 @@ class OrderViewSet(viewsets.ModelViewSet):
                 ).exclude(employee__is_superuser=True).exclude(employee__employeeidnum=0)
             return qs
 
-        # ── employee_id guard ──────────────────────────────────────────
+        # ── employee_id guard & resolution ───────────────────────────
+        target_emp = None
+        if not null(employee_id):
+            from users.models import Employee
+            if str(employee_id).isdigit():
+                target_emp = Employee.objects.select_related("role").filter(employeeidnum=int(employee_id), is_deleted=False).first()
+            else:
+                try:
+                    target_emp = Employee.objects.select_related("role").filter(id=employee_id, is_deleted=False).first()
+                except Exception:
+                    target_emp = None
+
         # Non-admins MUST NOT filter by another employee's ID.
-        # If they pass employee_id at all, it must match their own token identity.
         if not is_admin and not null(employee_id):
             from rest_framework.exceptions import PermissionDenied
-            if str(user.pk) != str(employee_id):
+            if not target_emp or str(user.pk) != str(target_emp.pk):
                 raise PermissionDenied(
                     "Access denied. You can only access your own orders."
                 )
@@ -186,17 +196,18 @@ class OrderViewSet(viewsets.ModelViewSet):
                 employee__role__hierarchy_level__gte=user.hierarchy_level
             ).exclude(employee__is_superuser=True).exclude(employee__employeeidnum=0)
             if not null(employee_id):
-                try:
-                    from users.models import Employee
-                    target_emp = Employee.objects.select_related("role").get(id=employee_id)
+                if target_emp:
                     if target_emp.hierarchy_level < user.hierarchy_level:
                         from rest_framework.exceptions import PermissionDenied
                         raise PermissionDenied("Access denied. You cannot view orders of higher-level employees.")
-                except Employee.DoesNotExist:
-                    pass
-                queryset = queryset.filter(employee_id=employee_id)
+                    queryset = queryset.filter(employee=target_emp)
+                else:
+                    queryset = queryset.none()
         elif not null(employee_id):
-            queryset = queryset.filter(employee_id=employee_id)
+            if target_emp:
+                queryset = queryset.filter(employee=target_emp)
+            else:
+                queryset = queryset.none()
 
         # ── Date-range filter ─────────────────────────────────────────
         if not null(from_date_str):
@@ -519,12 +530,22 @@ class CollectionViewSet(viewsets.ModelViewSet):
                 ).exclude(employee__is_superuser=True).exclude(employee__employeeidnum=0)
             return qs
 
-        # ── employee_id guard ──────────────────────────────────────────
+        # ── employee_id guard & resolution ───────────────────────────
+        target_emp = None
+        if not null(employee_id):
+            from users.models import Employee
+            if str(employee_id).isdigit():
+                target_emp = Employee.objects.select_related("role").filter(employeeidnum=int(employee_id), is_deleted=False).first()
+            else:
+                try:
+                    target_emp = Employee.objects.select_related("role").filter(id=employee_id, is_deleted=False).first()
+                except Exception:
+                    target_emp = None
+
         # Non-admins MUST NOT filter by another employee's ID.
-        # If they pass employee_id at all, it must match their own token identity.
         if not is_admin and not null(employee_id):
             from rest_framework.exceptions import PermissionDenied
-            if str(user.pk) != str(employee_id):
+            if not target_emp or str(user.pk) != str(target_emp.pk):
                 raise PermissionDenied(
                     "Access denied. You can only access your own collections."
                 )
@@ -538,18 +559,19 @@ class CollectionViewSet(viewsets.ModelViewSet):
                 employee__role__hierarchy_level__gte=user.hierarchy_level
             ).exclude(employee__is_superuser=True).exclude(employee__employeeidnum=0)
             if not null(employee_id):
-                try:
-                    from users.models import Employee
-                    target_emp = Employee.objects.select_related("role").get(id=employee_id)
+                if target_emp:
                     if target_emp.hierarchy_level < user.hierarchy_level:
                         from rest_framework.exceptions import PermissionDenied
                         raise PermissionDenied("Access denied. You cannot view collections of higher-level employees.")
-                except Employee.DoesNotExist:
-                    pass
-                queryset = queryset.filter(employee_id=employee_id)
+                    queryset = queryset.filter(employee=target_emp)
+                else:
+                    queryset = queryset.none()
         elif not null(employee_id):
             # Admins can optionally narrow to a specific employee.
-            queryset = queryset.filter(employee_id=employee_id)
+            if target_emp:
+                queryset = queryset.filter(employee=target_emp)
+            else:
+                queryset = queryset.none()
 
         # ── Date-range filter ─────────────────────────────────────────
         if not null(from_date_str):
