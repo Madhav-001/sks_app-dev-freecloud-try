@@ -2064,14 +2064,33 @@ class AdminSODReportView(APIView):
         responses={200: SODReportResponseSerializer},
     )
     def get(self, request, employee_id):
-        target_employee = get_object_or_404(Employee.objects.select_related("role"), pk=employee_id)
+        # Support UUID, integer employeeidnum, or username
+        target_employee = None
+        if str(employee_id).isdigit():
+            target_employee = Employee.objects.select_related("role").filter(employeeidnum=int(employee_id), is_deleted=False).first()
+        else:
+            try:
+                target_employee = Employee.objects.select_related("role").filter(id=employee_id, is_deleted=False).first()
+            except Exception:
+                pass
+        if not target_employee:
+            target_employee = Employee.objects.select_related("role").filter(username__iexact=str(employee_id), is_deleted=False).first()
+
+        if not target_employee:
+            return response.Response(
+                {"detail": f"Employee '{employee_id}' not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
         if not request.user.is_owner and target_employee.hierarchy_level < request.user.hierarchy_level:
             return response.Response(
                 {"detail": "You do not have permission to view report details for higher-level employees."},
                 status=status.HTTP_403_FORBIDDEN,
             )
+
         target_date = _parse_report_date(request.query_params.get("date"))
-        data = calculate_sod_data(target_employee, target_date)
+        attendance = Attendance.objects.filter(employee=target_employee, date=target_date).first()
+        data = calculate_sod_data(target_employee, target_date, attendance=attendance, require_attendance=False)
         return response.Response(data, status=status.HTTP_200_OK)
 
 
@@ -2087,14 +2106,33 @@ class AdminEODReportView(APIView):
         responses={200: EODReportResponseSerializer},
     )
     def get(self, request, employee_id):
-        target_employee = get_object_or_404(Employee.objects.select_related("role"), pk=employee_id)
+        # Support UUID, integer employeeidnum, or username
+        target_employee = None
+        if str(employee_id).isdigit():
+            target_employee = Employee.objects.select_related("role").filter(employeeidnum=int(employee_id), is_deleted=False).first()
+        else:
+            try:
+                target_employee = Employee.objects.select_related("role").filter(id=employee_id, is_deleted=False).first()
+            except Exception:
+                pass
+        if not target_employee:
+            target_employee = Employee.objects.select_related("role").filter(username__iexact=str(employee_id), is_deleted=False).first()
+
+        if not target_employee:
+            return response.Response(
+                {"detail": f"Employee '{employee_id}' not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
         if not request.user.is_owner and target_employee.hierarchy_level < request.user.hierarchy_level:
             return response.Response(
                 {"detail": "You do not have permission to view report details for higher-level employees."},
                 status=status.HTTP_403_FORBIDDEN,
             )
+
         target_date = _parse_report_date(request.query_params.get("date"))
-        data = calculate_eod_data(target_employee, target_date)
+        attendance = Attendance.objects.filter(employee=target_employee, date=target_date).first()
+        data = calculate_eod_data(target_employee, target_date, attendance=attendance, require_attendance=False)
         return response.Response(data, status=status.HTTP_200_OK)
 
 

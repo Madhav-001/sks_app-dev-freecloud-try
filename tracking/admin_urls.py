@@ -32,9 +32,9 @@ urlpatterns = [
 
     # ── SOD & EOD Admin Views ───────────────────────────────────────────────
     # GET /api/admin/tracking/sod/<employee_id>/?date=YYYY-MM-DD
-    path('sod/<uuid:employee_id>/', AdminSODReportView.as_view(), name='admin-sod-report'),
+    path('sod/<str:employee_id>/', AdminSODReportView.as_view(), name='admin-sod-report'),
     # GET /api/admin/tracking/eod/<employee_id>/?date=YYYY-MM-DD
-    path('eod/<uuid:employee_id>/', AdminEODReportView.as_view(), name='admin-eod-report'),
+    path('eod/<str:employee_id>/', AdminEODReportView.as_view(), name='admin-eod-report'),
 
     # ── Mileage ─────────────────────────────────────────────────────────────
 

@@ -23,7 +23,7 @@ def get_attendance_for_date(employee, target_date=None):
     return attendance, target_date
 
 
-def calculate_sod_data(employee, target_date=None, attendance=None):
+def calculate_sod_data(employee, target_date=None, attendance=None, require_attendance=True):
     """
     Calculates Start of Day (SOD) report metrics for an employee on target_date:
     1. Monthly target (from MonthlyTarget).
@@ -36,7 +36,10 @@ def calculate_sod_data(employee, target_date=None, attendance=None):
         target_date = timezone.localdate()
 
     if attendance is None:
-        attendance, _ = get_attendance_for_date(employee, target_date)
+        if require_attendance:
+            attendance, _ = get_attendance_for_date(employee, target_date)
+        else:
+            attendance = Attendance.objects.filter(employee=employee, date=target_date).first()
 
     month_start = date(target_date.year, target_date.month, 1)
     month_name = target_date.strftime("%B")
@@ -81,10 +84,10 @@ def calculate_sod_data(employee, target_date=None, attendance=None):
     balance_visits_target = max(0, month_visits_target - till_now_visits)
 
     # 4. Today's target from attendance
-    today_sales_target = attendance.sod_sales_target or Decimal("0.00")
-    today_collection_target = attendance.sod_collection_target or Decimal("0.00")
-    today_visits_target = attendance.sod_visits_target or 0
-    today_market_plan = attendance.sod_market_plan or ""
+    today_sales_target = attendance.sod_sales_target or Decimal("0.00") if attendance else Decimal("0.00")
+    today_collection_target = attendance.sod_collection_target or Decimal("0.00") if attendance else Decimal("0.00")
+    today_visits_target = attendance.sod_visits_target or 0 if attendance else 0
+    today_market_plan = attendance.sod_market_plan or "" if attendance else ""
 
     structured_data = {
         "officer_name": officer_name,
@@ -128,7 +131,7 @@ def calculate_sod_data(employee, target_date=None, attendance=None):
     return structured_data
 
 
-def calculate_eod_data(employee, target_date=None, attendance=None):
+def calculate_eod_data(employee, target_date=None, attendance=None, require_attendance=True):
     """
     Calculates End of Day (EOD) report metrics for an employee on target_date:
     1. Opening, closing, total travel KM from Attendance.
@@ -142,15 +145,18 @@ def calculate_eod_data(employee, target_date=None, attendance=None):
         target_date = timezone.localdate()
 
     if attendance is None:
-        attendance, _ = get_attendance_for_date(employee, target_date)
+        if require_attendance:
+            attendance, _ = get_attendance_for_date(employee, target_date)
+        else:
+            attendance = Attendance.objects.filter(employee=employee, date=target_date).first()
 
     month_name = target_date.strftime("%B")
     date_str = target_date.strftime("%d/%m/%Y")
     officer_name = employee.name if employee.name else employee.username
 
-    opening_km = attendance.start_km
-    closing_km = attendance.end_km
-    travel_km = attendance.total_km
+    opening_km = attendance.start_km if attendance else None
+    closing_km = attendance.end_km if attendance else None
+    travel_km = attendance.total_km if attendance else None
     if travel_km is None and closing_km is not None and opening_km is not None:
         travel_km = round(closing_km - opening_km, 2)
 
@@ -187,7 +193,7 @@ def calculate_eod_data(employee, target_date=None, attendance=None):
     visited_counters_count = today_visits.count()
 
     # Visited areas: use attendance.eod_visited_areas or infer from visited dealers
-    visited_areas = attendance.eod_visited_areas
+    visited_areas = attendance.eod_visited_areas if attendance else ""
     if not visited_areas and today_visits.exists():
         areas = []
         for v in today_visits:
@@ -200,7 +206,7 @@ def calculate_eod_data(employee, target_date=None, attendance=None):
     elif not visited_areas:
         visited_areas = "Nil"
 
-    tomorrow_plan = attendance.eod_tomorrow_plan or ""
+    tomorrow_plan = attendance.eod_tomorrow_plan or "" if attendance else ""
 
     structured_data = {
         "officer_name": officer_name,
