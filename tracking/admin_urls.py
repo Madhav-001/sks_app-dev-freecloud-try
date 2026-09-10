@@ -7,8 +7,13 @@ from .views import (
     AdminEODReportView,
     AdminSalesmanVisitCountView,
 )
+from .location_views import AdminEmployeeLocationsView
 
 urlpatterns = [
+    # ── Live Employee Locations ─────────────────────────────────────────────
+    # GET /api/admin/tracking/employee-locations/
+    path('employee-locations/', AdminEmployeeLocationsView.as_view(), name='admin-employee-locations'),
+
     # ── Salesman Visit Count ────────────────────────────────────────────────
     # GET /api/admin/tracking/visit/
     path('visit/', AdminSalesmanVisitCountView.as_view(), name='admin-salesman-visit-count'),

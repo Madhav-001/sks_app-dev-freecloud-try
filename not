@@ -64,9 +64,14 @@ ok now give me new propmt for itagrat this ["GET  /api/tracking/visit/{employee_
 
 
 
+this is my dashboard views. i need "GET /api/admin/..." API for this dashboards. and give me prompt for integrate the api into my front end web dashboard.
+
+
+this my "live location page" i plane to show every employee current(last active) location data with that employee details as a list in this page only today's data. and this "GET /api/admin/tracking/employee-locations" API return all employees last location details only. so, add API and give me prompt for integrate the api into my frontend "live location page". 
 
 
 
+this is my 1 page deatails for 1 employee. creata new "GET /api/admin/auth/employee/{id}/" API for this page this page. 
 
 
 

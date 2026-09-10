@@ -2443,3 +2443,7 @@ class AdminSalesmanVisitCountView(APIView):
 
         return response.Response(response_data, status=status.HTTP_200_OK)
 
+
+# Re-export AdminEmployeeLocationsView for convenience
+from .location_views import AdminEmployeeLocationsView
+

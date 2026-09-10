@@ -52,6 +52,10 @@ class NotificationRepository:
         notification.delete()
 
 
+import time
+from django.db.utils import OperationalError
+
+
 class DeviceRepository:
 
     @staticmethod
@@ -60,19 +64,27 @@ class DeviceRepository:
 
     @staticmethod
     def register_device(user, platform, device_id, device_name, app_version, push_token=None):
-        device, created = Device.objects.update_or_create(
-            user=user,
-            device_id=device_id,
-            defaults={
-                'platform': platform,
-                'device_name': device_name,
-                'app_version': app_version,
-                'push_token': push_token,
-                'active': True,
-                'last_seen': timezone.now()
-            }
-        )
-        return device
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                device, created = Device.objects.update_or_create(
+                    user=user,
+                    device_id=device_id,
+                    defaults={
+                        'platform': platform,
+                        'device_name': device_name,
+                        'app_version': app_version,
+                        'push_token': push_token,
+                        'active': True,
+                        'last_seen': timezone.now()
+                    }
+                )
+                return device
+            except OperationalError as exc:
+                if "locked" in str(exc).lower() and attempt < max_retries - 1:
+                    time.sleep(0.2 * (attempt + 1))
+                    continue
+                raise
 
     @staticmethod
     def deactivate_device(user, device_id):

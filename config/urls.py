@@ -17,6 +17,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
+from sales.dashboard_views import AdminDashboardView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -32,6 +33,7 @@ urlpatterns = [
     path('api/admin/tracking/', include('tracking.admin_urls')),
     path('api/sales/', include('sales.urls')),
     path('api/admin/sales/', include('sales.admin_urls')),
+    path('api/admin/dashboard/', AdminDashboardView.as_view(), name='admin-dashboard'),
     path('api/crm/', include('crm.urls')),
     path('api/communication/', include('communication.urls')),
     path('api/notifications/', include('notifications.urls')),
